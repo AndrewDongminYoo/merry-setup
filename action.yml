@@ -1,0 +1,79 @@
+---
+name: Merry Setup
+description: Set up Dart or Flutter, Merry, optional tools, Trunk, and project dependencies.
+
+inputs:
+  sdk:
+    description: "SDK family to install. Supported values: 'dart' or 'flutter'."
+    required: true
+  sdk-version:
+    description: "SDK version to install. Use 'stable' or an exact Dart or Flutter version."
+    required: false
+    default: stable
+  merry:
+    description: "Whether to activate Merry globally. Supported values: 'true' or 'false'."
+    required: false
+    default: "true"
+  merry-version:
+    description: Optional pub version constraint for Merry.
+    required: false
+    default: ""
+  dart-packages:
+    description: Additional global Dart packages, one per line. Each line must be '<name>' or '<name>=<constraint>'.
+    required: false
+    default: ""
+  bundles:
+    description: "Coupled tool bundles, one per line. Currently supported: 'flutterfire'."
+    required: false
+    default: ""
+  firebase-tools-version:
+    description: Optional exact firebase-tools version. Valid only when the flutterfire bundle is enabled.
+    required: false
+    default: ""
+  precache:
+    description: Flutter precache targets, one per line. Empty disables precaching and this input is invalid when sdk is dart.
+    required: false
+    default: ""
+  bootstrap:
+    description: "Project bootstrap strategy. Supported values: 'none', 'dart', 'flutter', 'melos', or 'very-good'."
+    required: true
+  project-dir:
+    description: Project directory containing pubspec.yaml.
+    required: false
+    default: .
+  trunk-path:
+    description: Optional path to an existing Trunk launcher. When empty, the official Trunk setup action locates or downloads one.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Validate project manifest
+      shell: bash
+      env:
+        MERRY_SETUP_BOOTSTRAP: ${{ inputs.bootstrap }}
+        MERRY_SETUP_PROJECT_DIR: ${{ inputs.project-dir }}
+      run: '"$GITHUB_ACTION_PATH/action/preflight.sh"'
+    - name: Set up Trunk launcher
+      uses: trunk-io/trunk-action/setup@e1234e67a86010d61ddac8d8ebf4b783e2ffd2fa  # v2.0.0
+      with:
+        trunk-path: ${{ inputs.trunk-path }}
+    - name: Set up Dart or Flutter environment
+      shell: bash
+      env:
+        MERRY_SETUP_SDK: ${{ inputs.sdk }}
+        MERRY_SETUP_SDK_VERSION: ${{ inputs.sdk-version }}
+        MERRY_SETUP_MERRY: ${{ inputs.merry }}
+        MERRY_SETUP_MERRY_VERSION: ${{ inputs.merry-version }}
+        MERRY_SETUP_DART_PACKAGES: ${{ inputs.dart-packages }}
+        MERRY_SETUP_BUNDLES: ${{ inputs.bundles }}
+        MERRY_SETUP_FIREBASE_TOOLS_VERSION: ${{ inputs.firebase-tools-version }}
+        MERRY_SETUP_PRECACHE: ${{ inputs.precache }}
+        MERRY_SETUP_BOOTSTRAP: ${{ inputs.bootstrap }}
+        MERRY_SETUP_PROJECT_DIR: ${{ inputs.project-dir }}
+      run: '"$GITHUB_ACTION_PATH/action/run.sh"'
+
+branding:
+  icon: package
+  color: blue

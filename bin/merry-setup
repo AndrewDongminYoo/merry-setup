@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ${DEBUG:-0} == 1 ]]; then
+  set -x
+fi
+
+die() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  printf '%s\n' \
+    'Usage:' \
+    '  merry-setup setup --sdk dart|flutter --bootstrap STRATEGY --persist-path ADAPTER [options]' \
+    '  merry-setup bootstrap --sdk dart|flutter --bootstrap STRATEGY --persist-path ADAPTER [options]'
+}
+
+require_option_value() {
+  local option_name="$1"
+  local remaining_count="$2"
+  local candidate_value="${3-}"
+
+  if ((remaining_count < 2)) || [[ ${candidate_value} == --* ]]; then
+    die "Option '${option_name}' requires a value."
+  fi
+}
+
+validate_absolute_path() {
+  local contract_name="$1"
+  local contract_value="$2"
+
+  if [[ -z ${contract_value} || ${contract_value} != /* || ${contract_value} =~ [[:cntrl:]] ]]; then
+    die "${contract_name} must be a nonempty absolute path."
+  fi
+}
+
+validate_host() {
+  local host_os
+  local host_arch
+
+  host_os="$(uname -s)"
+  host_arch="$(uname -m)"
+
+  [[ ${host_os} == Linux ]] || die "Unsupported operating system: ${host_os}. The initial release supports Linux x64 only."
+  [[ ${host_arch} == x86_64 ]] || die "Unsupported architecture: ${host_arch}. The initial release supports Linux x64 only."
+}
+
+main() {
+  local command_name=""
+  local sdk_family=""
+  local sdk_version="stable"
+  local bootstrap_strategy=""
+  local persistence_adapter=""
+  local project_dir="${PWD}"
+  local resolved_project_dir=""
+  local merry_enabled="true"
+  local merry_version=""
+  local firebase_tools_version=""
+  local trunk_path=""
+  local managed_home=""
+  local option_name=""
+  local option_value=""
+  local -a dart_packages=()
+  local -a bundles=()
+  local -a precache_inputs=()
+
+  (($# > 0)) || die "Command is required."
+
+  command_name="$1"
+  shift
+
+  case "${command_name}" in
+  setup | bootstrap)
+    ;;
+  help | -h | --help)
+    usage
+    return 0
+    ;;
+  *)
+    die "Unknown command: ${command_name}"
+    ;;
+  esac
+
+  while (($# > 0)); do
+    option_name="$1"
+
+    case "${option_name}" in
+    --no-merry)
+      merry_enabled="false"
+      shift
+      ;;
+    --sdk | --sdk-version | --bootstrap | --persist-path | --project-dir | --merry-version | --dart-package | --bundle | --firebase-tools-version | --precache | --trunk-path)
+      require_option_value "${option_name}" "$#" "${2-}"
+      option_value="$2"
+
+      case "${option_name}" in
+      --sdk)
+        sdk_family="${option_value}"
+        ;;
+      --sdk-version)
+        sdk_version="${option_value}"
+        ;;
+      --bootstrap)
+        bootstrap_strategy="${option_value}"
+        ;;
+      --persist-path)
+        persistence_adapter="${option_value}"
+        ;;
+      --project-dir)
+        project_dir="${option_value}"
+        ;;
+      --merry-version)
+        merry_version="${option_value}"
+        ;;
+      --dart-package)
+        dart_packages+=("${option_value}")
+        ;;
+      --bundle)
+        bundles+=("${option_value}")
+        ;;
+      --firebase-tools-version)
+        firebase_tools_version="${option_value}"
+        ;;
+      --precache)
+        precache_inputs+=("${option_value}")
+        ;;
+      --trunk-path)
+        trunk_path="${option_value}"
+        ;;
+      esac
+
+      shift 2
+      ;;
+    *)
+      die "Unknown option: ${option_name}"
+      ;;
+    esac
+  done
+
+  [[ -n ${sdk_family} ]] || die "Option '--sdk' is required."
+  [[ -n ${bootstrap_strategy} ]] || die "Option '--bootstrap' is required."
+  [[ -n ${persistence_adapter} ]] || die "Option '--persist-path' is required."
+
+  case "${sdk_family}" in
+  dart | flutter)
+    ;;
+  *)
+    die "Option '--sdk' must be one of: dart, flutter; received '${sdk_family}'."
+    ;;
+  esac
+
+  case "${bootstrap_strategy}" in
+  none | dart | flutter | melos | very-good)
+    ;;
+  *)
+    die "Option '--bootstrap' must be one of: none, dart, flutter, melos, very-good; received '${bootstrap_strategy}'."
+    ;;
+  esac
+
+  case "${persistence_adapter}" in
+  bashrc | github | none)
+    ;;
+  *)
+    die "Option '--persist-path' must be one of: bashrc, github, none; received '${persistence_adapter}'."
+    ;;
+  esac
+
+  if [[ ${merry_enabled} == false && -n ${merry_version} ]]; then
+    die "Option '--merry-version' conflicts with '--no-merry'."
+  fi
+
+  if [[ ${sdk_family} == dart && ${#precache_inputs[@]} -gt 0 ]]; then
+    die "Option '--precache' is invalid when '--sdk dart' is selected."
+  fi
+
+  if [[ ${MERRY_SETUP_HOME+x} == x ]]; then
+    managed_home="${MERRY_SETUP_HOME}"
+  else
+    [[ -n ${HOME:-} ]] || die "HOME is required when MERRY_SETUP_HOME is unset."
+    managed_home="${HOME}/.merry-setup"
+  fi
+  validate_absolute_path "MERRY_SETUP_HOME" "${managed_home}"
+  export MERRY_SETUP_HOME="${managed_home}"
+
+  if [[ ${PUB_CACHE+x} == x ]]; then
+    validate_absolute_path "PUB_CACHE" "${PUB_CACHE}"
+  fi
+
+  if [[ ${project_dir} == /* ]]; then
+    resolved_project_dir="${project_dir}"
+  else
+    resolved_project_dir="${PWD}/${project_dir}"
+  fi
+
+  if [[ ${bootstrap_strategy} != none ]]; then
+    [[ -d ${resolved_project_dir} ]] || die "Project directory does not exist: ${project_dir}"
+    [[ -f ${resolved_project_dir}/pubspec.yaml ]] || die "Project directory does not contain pubspec.yaml: ${project_dir}"
+  fi
+
+  validate_host
+
+  : "${sdk_version}" "${dart_packages[*]-}" "${bundles[*]-}" "${firebase_tools_version}" "${trunk_path}"
+  die "Command validation passed, but SDK execution is not implemented in this development snapshot."
+}
+
+main "$@"
