@@ -776,11 +776,11 @@ install_flutterfire_bundle() {
     firebase_package="firebase-tools@${firebase_tools_version}"
   fi
 
-  "${NPM_EXECUTABLE}" install --global "${firebase_package}" || die "Failed to install Firebase Tools through npm."
   npm_global_prefix="$("${NPM_EXECUTABLE}" prefix --global)" || die "Failed to determine the npm global prefix."
   validate_absolute_path "npm global prefix" "${npm_global_prefix}"
   npm_global_bin="${npm_global_prefix}/bin"
   firebase_executable="${npm_global_bin}/firebase"
+  "${NPM_EXECUTABLE}" install --global "${firebase_package}" || die "Failed to install Firebase Tools through npm."
   [[ -x ${firebase_executable} ]] || die "Firebase Tools was installed but the expected executable is unavailable: ${firebase_executable}"
   PATH="${CURRENT_SDK_ROOT}/bin:${PUB_CACHE}/bin:${npm_global_bin}${PATH:+:${PATH}}"
   export PATH

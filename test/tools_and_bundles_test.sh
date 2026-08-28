@@ -42,6 +42,7 @@ if [[ -z ${MERRY_SETUP_TEST_CASE:-} ]]; then
     invalid_firebase_version
     flutterfire_uses_npm_prefix_executable
     flutterfire_uses_validated_npm
+    invalid_npm_prefix
     missing_npm
     failed_npm_install
     failed_activation_preserves_cache
@@ -610,6 +611,18 @@ case_flutterfire_uses_validated_npm() {
   assert_log_excludes 'CALL fake-pub-cache-npm'
   assert_stdout_contains 'Firebase Tools version: 15.0.0'
   pass "FlutterFire uses npm resolved before PUB_CACHE changes PATH"
+}
+
+case_invalid_npm_prefix() {
+  prepare_flutter_case
+  export NPM_GLOBAL_PREFIX="${TEST_ROOT}/bad:prefix"
+  run_setup flutter 3.44.0 none --bundle flutterfire --no-merry
+  assert_nonzero
+  assert_stderr_contains 'npm global prefix must be a nonempty absolute path.'
+  assert_log_contains 'CALL npm|prefix|--global'
+  assert_log_excludes 'CALL npm|install|--global|firebase-tools'
+  assert_path_absent "${NPM_GLOBAL_PREFIX}"
+  pass "invalid npm prefix fails before global installation"
 }
 
 case_missing_npm() {
