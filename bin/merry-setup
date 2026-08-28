@@ -21,6 +21,7 @@ RESOLVED_ARCHIVE_SHA256=""
 CURRENT_SDK_ROOT=""
 HOST_ARCHITECTURE=""
 FLUTTERFIRE_BUNDLE_ENABLED=false
+NPM_EXECUTABLE=""
 declare -a ACTIVATION_PACKAGE_NAMES=()
 declare -a ACTIVATION_PACKAGE_CONSTRAINTS=()
 declare -A ACTIVATION_PACKAGE_INDEX=()
@@ -597,7 +598,8 @@ validate_firebase_tools() {
   fi
 
   if [[ ${FLUTTERFIRE_BUNDLE_ENABLED} == true ]]; then
-    command -v npm >/dev/null 2>&1 || die "npm is required for the 'flutterfire' bundle."
+    NPM_EXECUTABLE="$(command -v npm)" || die "npm is required for the 'flutterfire' bundle."
+    [[ ${NPM_EXECUTABLE} == /* && -x ${NPM_EXECUTABLE} ]] || die "npm is required for the 'flutterfire' bundle."
   fi
 }
 
@@ -702,12 +704,14 @@ known_tool_executable() {
 log_known_tool_version() {
   local package_name="$1"
   local tool_executable=""
+  local tool_path=""
   local tool_output=""
   local tool_version=""
 
   tool_executable="$(known_tool_executable "${package_name}")" || return 0
-  command -v "${tool_executable}" >/dev/null 2>&1 || die "Activated Dart package '${package_name}' did not provide the expected '${tool_executable}' executable on PATH."
-  tool_output="$("${tool_executable}" --version 2>&1)" || die "Failed to read the version of activated Dart package '${package_name}'."
+  tool_path="${PUB_CACHE}/bin/${tool_executable}"
+  [[ -x ${tool_path} ]] || die "Activated Dart package '${package_name}' did not provide the expected executable: ${tool_path}"
+  tool_output="$("${tool_path}" --version 2>&1)" || die "Failed to read the version of activated Dart package '${package_name}'."
   tool_version="$(extract_first_semver "${tool_output}")" || die "Activated Dart package '${package_name}' returned an invalid version."
   printf 'Tool version: package=%s executable=%s version=%s\n' "${package_name}" "${tool_executable}" "${tool_version}"
 }
@@ -772,8 +776,8 @@ install_flutterfire_bundle() {
     firebase_package="firebase-tools@${firebase_tools_version}"
   fi
 
-  npm install --global "${firebase_package}" || die "Failed to install Firebase Tools through npm."
-  npm_global_prefix="$(npm prefix --global)" || die "Failed to determine the npm global prefix."
+  "${NPM_EXECUTABLE}" install --global "${firebase_package}" || die "Failed to install Firebase Tools through npm."
+  npm_global_prefix="$("${NPM_EXECUTABLE}" prefix --global)" || die "Failed to determine the npm global prefix."
   validate_absolute_path "npm global prefix" "${npm_global_prefix}"
   npm_global_bin="${npm_global_prefix}/bin"
   firebase_executable="${npm_global_bin}/firebase"

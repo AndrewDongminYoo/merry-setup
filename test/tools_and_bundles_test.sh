@@ -41,6 +41,7 @@ if [[ -z ${MERRY_SETUP_TEST_CASE:-} ]]; then
     firebase_version_without_bundle
     invalid_firebase_version
     flutterfire_uses_npm_prefix_executable
+    flutterfire_uses_validated_npm
     missing_npm
     failed_npm_install
     failed_activation_preserves_cache
@@ -593,6 +594,22 @@ case_flutterfire_uses_npm_prefix_executable() {
   assert_log_excludes 'CALL stale-firebase|--version'
   assert_stdout_contains 'Firebase Tools version: 14.2.1'
   pass "FlutterFire validates npm-prefix Firebase Tools over stale PATH entry"
+}
+
+case_flutterfire_uses_validated_npm() {
+  prepare_flutter_case
+  export PUB_CACHE="${TEST_ROOT}/explicit-cache"
+  mkdir -p "${PUB_CACHE}/bin"
+  # shellcheck disable=SC2016 # The generated stub expands its runtime environment.
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "CALL fake-pub-cache-npm|%s\\n" "$@" >>"${TEST_COMMAND_LOG}"' 'exit 27' >"${PUB_CACHE}/bin/npm"
+  chmod +x "${PUB_CACHE}/bin/npm"
+  run_setup flutter 3.44.0 none --bundle flutterfire --no-merry
+  assert_nonzero
+  assert_log_contains 'CALL npm|install|--global|firebase-tools'
+  assert_log_contains 'CALL npm|prefix|--global'
+  assert_log_excludes 'CALL fake-pub-cache-npm'
+  assert_stdout_contains 'Firebase Tools version: 15.0.0'
+  pass "FlutterFire uses npm resolved before PUB_CACHE changes PATH"
 }
 
 case_missing_npm() {
