@@ -1,0 +1,30 @@
+---
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Bash implementation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6, verified 2026-08-28
+
+      - name: Check Bash syntax
+        run: bash -n bin/merry-setup action/preflight.sh action/run.sh test/*.sh
+
+      - name: Run ShellCheck
+        run: shellcheck bin/merry-setup action/preflight.sh action/run.sh test/*.sh
+
+      - name: Run test suite
+        run: bash test/run.sh
