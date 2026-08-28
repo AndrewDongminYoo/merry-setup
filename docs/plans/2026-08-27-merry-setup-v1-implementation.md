@@ -179,16 +179,17 @@ Expected: the scripts pass syntax, tests, and ShellCheck; the exact Action metad
 **Files:**
 
 - Modify: `bin/merry-setup`
+- Modify: `test/run.sh`
 - Create: `test/sdk_installation_test.sh`
 - Create: `test/fixtures/dart-version-3.11.4.json`
 - Create: `test/fixtures/dart-version-3.12.0.json`
 - Create: `test/fixtures/flutter-releases.json`
 
-- [ ] Write failing tests for Linux x64 host validation, stable-to-exact resolution, exact versions, missing metadata, missing checksum, missing architecture, semantic-version ordering, the 3.12.0 runtime floor, Flutter bundled Dart, and no download below the floor.
-- [ ] Add a narrow fail-closed parser for the official metadata fields used by v1. Do not introduce `jq`, Python, or another runtime dependency before an SDK exists.
-- [ ] Write failing tests for checksum mismatch, extraction failure, staged version mismatch, unique sibling staging, cleanup, valid reuse, invalid final paths, symlink final paths, and a publication race winner.
-- [ ] Implement download-to-staging, official checksum verification, archive extraction, executable and version validation, same-filesystem rename, losing-race validation, and exit-trap cleanup.
-- [ ] Never delete or replace an invalid existing final SDK path. Never name a final directory `stable` or create a `current` alias.
+- [x] Write failing tests for Linux x64 host validation, stable-to-exact resolution, exact versions, missing metadata, missing checksum, missing architecture, semantic-version ordering, the 3.12.0 runtime floor, Flutter bundled Dart, and no download below the floor.
+- [x] Add a narrow fail-closed parser for the official metadata fields used by v1. Do not introduce `jq`, Python, or another runtime dependency before an SDK exists.
+- [x] Write failing tests for checksum mismatch, extraction failure, staged version mismatch, unique sibling staging, cleanup, valid reuse, invalid final paths, symlink final paths, and a publication race winner.
+- [x] Implement download-to-staging, official checksum verification, archive extraction, executable and version validation, same-filesystem no-clobber rename, losing-race validation, and exit-trap cleanup.
+- [x] Never delete or replace an invalid existing final SDK path. Never name a final directory `stable` or create a `current` alias.
 
 ```bash
 /opt/homebrew/bin/bash test/sdk_installation_test.sh

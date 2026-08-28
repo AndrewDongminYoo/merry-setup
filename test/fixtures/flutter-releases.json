@@ -1,0 +1,28 @@
+{
+  "base_url": "https://storage.googleapis.com/flutter_infra_release/releases",
+  "current_release": {
+    "stable": "flutter-3.44.0-hash"
+  },
+  "releases": [
+    {
+      "hash": "flutter-3.44.0-hash",
+      "channel": "stable",
+      "version": "3.44.0",
+      "dart_sdk_version": "3.12.0 (build 3.12.0-327.4.beta)",
+      "dart_sdk_arch": "x64",
+      "release_date": "2026-05-18T17:04:36.610351Z",
+      "archive": "stable/linux/flutter_linux_3.44.0-stable.tar.xz",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "hash": "flutter-3.41.6-hash",
+      "channel": "stable",
+      "version": "3.41.6",
+      "dart_sdk_version": "3.11.4",
+      "dart_sdk_arch": "x64",
+      "release_date": "2026-03-26T17:42:04.581100Z",
+      "archive": "stable/linux/flutter_linux_3.41.6-stable.tar.xz",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ]
+}
