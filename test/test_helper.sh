@@ -9,6 +9,7 @@ readonly ORIGINAL_TEST_PATH="${PATH}"
 readonly CLI_PATH="${REPO_ROOT}/bin/merry-setup"
 
 TEST_ROOT=""
+TEST_TEMP_BASE=""
 TEST_STDOUT=""
 TEST_STDERR=""
 TEST_COMMAND_LOG=""
@@ -20,7 +21,10 @@ fail() {
 }
 
 setup_test_env() {
-  TEST_ROOT="$(mktemp -d /tmp/merry-setup-test.XXXXXX)"
+  TEST_TEMP_BASE="${TMPDIR:-/tmp}"
+  [[ -d ${TEST_TEMP_BASE} ]] || fail "test temporary directory does not exist: ${TEST_TEMP_BASE}"
+  TEST_TEMP_BASE="$(cd "${TEST_TEMP_BASE}" && pwd -P)"
+  TEST_ROOT="$(mktemp -d "${TEST_TEMP_BASE}/merry-setup-test.XXXXXX")"
   TEST_STDOUT="${TEST_ROOT}/stdout"
   TEST_STDERR="${TEST_ROOT}/stderr"
   TEST_COMMAND_LOG="${TEST_ROOT}/commands.log"
@@ -35,7 +39,7 @@ setup_test_env() {
 }
 
 cleanup_test_env() {
-  if [[ -n ${TEST_ROOT} && -d ${TEST_ROOT} && ${TEST_ROOT} == /tmp/merry-setup-test.* ]]; then
+  if [[ -n ${TEST_ROOT} && -n ${TEST_TEMP_BASE} && -d ${TEST_ROOT} && ${TEST_ROOT} == "${TEST_TEMP_BASE}/merry-setup-test."* ]]; then
     rm -rf -- "${TEST_ROOT}"
   fi
 }

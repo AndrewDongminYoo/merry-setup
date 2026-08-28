@@ -20,6 +20,10 @@ RESOLVED_ARCHIVE_URL=""
 RESOLVED_ARCHIVE_SHA256=""
 CURRENT_SDK_ROOT=""
 HOST_ARCHITECTURE=""
+FLUTTERFIRE_BUNDLE_ENABLED=false
+declare -a ACTIVATION_PACKAGE_NAMES=()
+declare -a ACTIVATION_PACKAGE_CONSTRAINTS=()
+declare -A ACTIVATION_PACKAGE_INDEX=()
 
 die() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -47,7 +51,7 @@ validate_absolute_path() {
   local contract_name="$1"
   local contract_value="$2"
 
-  if [[ -z ${contract_value} || ${contract_value} != /* || ${contract_value} =~ [[:cntrl:]] ]]; then
+  if [[ -z ${contract_value} || ${contract_value} != /* || ${contract_value} == *:* || ${contract_value} =~ [[:cntrl:]] ]]; then
     die "${contract_name} must be a nonempty absolute path."
   fi
 }
@@ -547,6 +551,243 @@ resolve_and_install_sdk() {
   log_resolved_sdk "${sdk_family}"
 }
 
+activation_plan_contains() {
+  local package_name="$1"
+
+  [[ ${ACTIVATION_PACKAGE_INDEX[${package_name}]+present} == present ]]
+}
+
+add_activation_package() {
+  local package_name="$1"
+  local package_constraint="$2"
+  local package_index="${#ACTIVATION_PACKAGE_NAMES[@]}"
+
+  ACTIVATION_PACKAGE_INDEX["${package_name}"]="${package_index}"
+  ACTIVATION_PACKAGE_NAMES+=("${package_name}")
+  ACTIVATION_PACKAGE_CONSTRAINTS+=("${package_constraint}")
+}
+
+validate_bundles() {
+  local bundle_name=""
+  local -A seen_bundles=()
+
+  FLUTTERFIRE_BUNDLE_ENABLED=false
+  for bundle_name in "$@"; do
+    [[ -n ${bundle_name} && ! ${bundle_name} =~ [[:cntrl:]] ]] || die "Invalid bundle name."
+    [[ ${seen_bundles[${bundle_name}]+present} != present ]] || die "Bundle '${bundle_name}' was provided more than once."
+    seen_bundles["${bundle_name}"]=true
+
+    case "${bundle_name}" in
+    flutterfire)
+      FLUTTERFIRE_BUNDLE_ENABLED=true
+      ;;
+    *)
+      die "Unsupported bundle: '${bundle_name}'."
+      ;;
+    esac
+  done
+}
+
+validate_firebase_tools() {
+  local firebase_tools_version="$1"
+
+  if [[ -n ${firebase_tools_version} ]]; then
+    [[ ${FLUTTERFIRE_BUNDLE_ENABLED} == true ]] || die "Option '--firebase-tools-version' requires the 'flutterfire' bundle."
+    is_exact_semver "${firebase_tools_version}" || die "Option '--firebase-tools-version' must be an exact semantic version."
+  fi
+
+  if [[ ${FLUTTERFIRE_BUNDLE_ENABLED} == true ]]; then
+    command -v npm >/dev/null 2>&1 || die "npm is required for the 'flutterfire' bundle."
+  fi
+}
+
+is_valid_dart_package_name() {
+  local package_name="$1"
+
+  [[ ${package_name} =~ ^[a-z][a-z0-9_]*$ ]] || return 1
+  case "${package_name}" in
+  abstract | as | assert | await | break | case | catch | class | const | continue | covariant | default | deferred | do | else | enum | export | extends | external | false | final | finally | for | hide | if | implements | import | in | inline | interface | is | late | library | mixin | new | null | of | on | operator | part | required | rethrow | return | sealed | set | super | switch | this | throw | true | try | type | var | void | while | with | yield)
+    return 1
+    ;;
+  esac
+}
+
+build_activation_plan() {
+  local merry_enabled="$1"
+  local merry_version="$2"
+  local merry_version_provided="$3"
+  local bootstrap_strategy="$4"
+  shift 4
+
+  local package_entry=""
+  local package_name=""
+  local package_constraint=""
+  local -A explicit_packages=()
+
+  ACTIVATION_PACKAGE_NAMES=()
+  ACTIVATION_PACKAGE_CONSTRAINTS=()
+  ACTIVATION_PACKAGE_INDEX=()
+
+  if [[ ${merry_enabled} == true ]]; then
+    if [[ ${merry_version_provided} == true ]]; then
+      [[ -n ${merry_version} && ${merry_version} != -* && ! ${merry_version} =~ [[:cntrl:]] ]] || die "Option '--merry-version' has an invalid constraint."
+    fi
+    add_activation_package merry "${merry_version}"
+  fi
+
+  for package_entry in "$@"; do
+    [[ -n ${package_entry} && ! ${package_entry} =~ [[:cntrl:]] ]] || die "Invalid Dart package entry."
+    package_name="${package_entry%%=*}"
+    package_constraint=""
+    if [[ ${package_entry} == *=* ]]; then
+      package_constraint="${package_entry#*=}"
+      [[ -n ${package_constraint} ]] || die "Dart package '${package_name}' has an empty constraint."
+      [[ ${package_constraint} != -* && ! ${package_constraint} =~ [[:cntrl:]] ]] || die "Dart package '${package_name}' has an invalid constraint."
+    fi
+
+    is_valid_dart_package_name "${package_name}" || die "Invalid Dart package name: '${package_name}'."
+    [[ ${package_name} != merry ]] || die "Dart package 'merry' must be configured through Merry options."
+    [[ ${explicit_packages[${package_name}]+present} != present ]] || die "Dart package '${package_name}' was provided more than once."
+    explicit_packages["${package_name}"]=true
+    add_activation_package "${package_name}" "${package_constraint}"
+  done
+
+  case "${bootstrap_strategy}" in
+  melos)
+    activation_plan_contains melos || add_activation_package melos ""
+    ;;
+  very-good)
+    activation_plan_contains very_good_cli || add_activation_package very_good_cli ""
+    ;;
+  esac
+
+  if [[ ${FLUTTERFIRE_BUNDLE_ENABLED} == true ]]; then
+    activation_plan_contains flutterfire_cli || add_activation_package flutterfire_cli ""
+  fi
+}
+
+resolve_pub_cache() {
+  local sdk_family="$1"
+
+  if [[ ${PUB_CACHE+x} != x ]]; then
+    PUB_CACHE="${MERRY_SETUP_HOME}/pub-cache/${sdk_family}/${RESOLVED_SDK_VERSION}"
+  fi
+  export PUB_CACHE
+
+  mkdir -p -- "${PUB_CACHE}/bin"
+  PATH="${CURRENT_SDK_ROOT}/bin:${PUB_CACHE}/bin${PATH:+:${PATH}}"
+  export PATH
+  printf 'Resolved PUB_CACHE: %s\n' "${PUB_CACHE}"
+}
+
+known_tool_executable() {
+  local package_name="$1"
+
+  case "${package_name}" in
+  merry | melos)
+    printf '%s\n' "${package_name}"
+    ;;
+  very_good_cli)
+    printf '%s\n' very_good
+    ;;
+  flutterfire_cli)
+    printf '%s\n' flutterfire
+    ;;
+  *)
+    return 1
+    ;;
+  esac
+}
+
+log_known_tool_version() {
+  local package_name="$1"
+  local tool_executable=""
+  local tool_output=""
+  local tool_version=""
+
+  tool_executable="$(known_tool_executable "${package_name}")" || return 0
+  command -v "${tool_executable}" >/dev/null 2>&1 || die "Activated Dart package '${package_name}' did not provide the expected '${tool_executable}' executable on PATH."
+  tool_output="$("${tool_executable}" --version 2>&1)" || die "Failed to read the version of activated Dart package '${package_name}'."
+  tool_version="$(extract_first_semver "${tool_output}")" || die "Activated Dart package '${package_name}' returned an invalid version."
+  printf 'Tool version: package=%s executable=%s version=%s\n' "${package_name}" "${tool_executable}" "${tool_version}"
+}
+
+log_activated_package_versions() {
+  local package_list_output=""
+  local planned_name=""
+  local listed_name=""
+  local listed_version=""
+  local trailing_value=""
+  local matched_version=""
+  local matched_count=0
+
+  ((${#ACTIVATION_PACKAGE_NAMES[@]} > 0)) || return 0
+  package_list_output="$("${CURRENT_SDK_ROOT}/bin/dart" pub global list)" || die "Failed to list activated Dart packages."
+
+  for planned_name in "${ACTIVATION_PACKAGE_NAMES[@]}"; do
+    matched_version=""
+    matched_count=0
+    while IFS=$' \t' read -r listed_name listed_version trailing_value; do
+      if [[ ${listed_name} == "${planned_name}" && -n ${listed_version} && -z ${trailing_value} ]]; then
+        matched_version="${listed_version}"
+        ((matched_count += 1))
+      fi
+    done <<<"${package_list_output}"
+    [[ ${matched_count} -eq 1 ]] || die "Unable to determine the activated version for Dart package '${planned_name}'."
+    printf 'Activated Dart package: name=%s version=%s\n' "${planned_name}" "${matched_version}"
+    log_known_tool_version "${planned_name}"
+  done
+}
+
+activate_global_packages() {
+  local package_index=0
+  local package_name=""
+  local package_constraint=""
+  local -a activate_command=()
+
+  for ((package_index = 0; package_index < ${#ACTIVATION_PACKAGE_NAMES[@]}; package_index += 1)); do
+    package_name="${ACTIVATION_PACKAGE_NAMES[package_index]}"
+    package_constraint="${ACTIVATION_PACKAGE_CONSTRAINTS[package_index]}"
+    activate_command=("${CURRENT_SDK_ROOT}/bin/dart" pub global activate "${package_name}")
+    if [[ -n ${package_constraint} ]]; then
+      activate_command+=("${package_constraint}")
+    fi
+    "${activate_command[@]}" || die "Failed to activate Dart package '${package_name}'."
+  done
+
+  log_activated_package_versions
+}
+
+install_flutterfire_bundle() {
+  local firebase_tools_version="$1"
+  local firebase_package=firebase-tools
+  local npm_global_prefix=""
+  local npm_global_bin=""
+  local firebase_executable=""
+  local firebase_output=""
+  local actual_firebase_version=""
+
+  [[ ${FLUTTERFIRE_BUNDLE_ENABLED} == true ]] || return 0
+  if [[ -n ${firebase_tools_version} ]]; then
+    firebase_package="firebase-tools@${firebase_tools_version}"
+  fi
+
+  npm install --global "${firebase_package}" || die "Failed to install Firebase Tools through npm."
+  npm_global_prefix="$(npm prefix --global)" || die "Failed to determine the npm global prefix."
+  validate_absolute_path "npm global prefix" "${npm_global_prefix}"
+  npm_global_bin="${npm_global_prefix}/bin"
+  firebase_executable="${npm_global_bin}/firebase"
+  [[ -x ${firebase_executable} ]] || die "Firebase Tools was installed but the expected executable is unavailable: ${firebase_executable}"
+  PATH="${CURRENT_SDK_ROOT}/bin:${PUB_CACHE}/bin:${npm_global_bin}${PATH:+:${PATH}}"
+  export PATH
+  firebase_output="$("${firebase_executable}" --version 2>&1)" || die "Failed to read the installed Firebase Tools version."
+  actual_firebase_version="$(extract_first_semver "${firebase_output}")" || die "Firebase Tools returned an invalid version."
+  if [[ -n ${firebase_tools_version} && ${actual_firebase_version} != "${firebase_tools_version}" ]]; then
+    die "Installed Firebase Tools version ${actual_firebase_version} does not match requested version ${firebase_tools_version}."
+  fi
+  printf 'Firebase Tools version: %s\n' "${actual_firebase_version}"
+}
+
 main() {
   local command_name=""
   local sdk_family=""
@@ -557,6 +798,7 @@ main() {
   local resolved_project_dir=""
   local merry_enabled="true"
   local merry_version=""
+  local merry_version_provided=false
   local firebase_tools_version=""
   local trunk_path=""
   local managed_home=""
@@ -613,6 +855,7 @@ main() {
         ;;
       --merry-version)
         merry_version="${option_value}"
+        merry_version_provided=true
         ;;
       --dart-package)
         dart_packages+=("${option_value}")
@@ -667,7 +910,7 @@ main() {
     ;;
   esac
 
-  if [[ ${merry_enabled} == false && -n ${merry_version} ]]; then
+  if [[ ${merry_enabled} == false && ${merry_version_provided} == true ]]; then
     die "Option '--merry-version' conflicts with '--no-merry'."
   fi
 
@@ -699,6 +942,9 @@ main() {
     [[ -f ${resolved_project_dir}/pubspec.yaml ]] || die "Project directory does not contain pubspec.yaml: ${project_dir}"
   fi
 
+  validate_bundles "${bundles[@]}"
+  validate_firebase_tools "${firebase_tools_version}"
+  build_activation_plan "${merry_enabled}" "${merry_version}" "${merry_version_provided}" "${bootstrap_strategy}" "${dart_packages[@]}"
   validate_host
 
   if [[ ${command_name} == bootstrap ]]; then
@@ -706,8 +952,11 @@ main() {
   fi
 
   resolve_and_install_sdk "${sdk_family}" "${sdk_version}"
+  resolve_pub_cache "${sdk_family}"
+  activate_global_packages
+  install_flutterfire_bundle "${firebase_tools_version}"
 
-  : "${dart_packages[*]-}" "${bundles[*]-}" "${firebase_tools_version}" "${trunk_path}" "${CURRENT_SDK_ROOT}"
+  : "${trunk_path}" "${CURRENT_SDK_ROOT}"
   die "SDK installation completed. Remaining setup steps are not implemented in this development snapshot."
 }
 

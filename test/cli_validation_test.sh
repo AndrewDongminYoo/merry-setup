@@ -64,6 +64,11 @@ assert_nonzero
 assert_stderr_contains "MERRY_SETUP_HOME must be a nonempty absolute path."
 pass "relative managed home"
 
+MERRY_SETUP_HOME="${TEST_ROOT}/managed:segment" run_cli setup --sdk dart --bootstrap none --persist-path none
+assert_nonzero
+assert_stderr_contains "MERRY_SETUP_HOME must be a nonempty absolute path."
+pass "PATH-delimiter managed home"
+
 run_cli setup --sdk dart --bootstrap none --persist-path none --no-merry --merry-version '^2.0.0'
 assert_nonzero
 assert_stderr_contains "Option '--merry-version' conflicts with '--no-merry'."
