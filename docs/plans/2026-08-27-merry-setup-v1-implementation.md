@@ -71,7 +71,7 @@
 - [x] Run Trunk initialization after listing existing manifests and quality configuration.
 
 ```bash
-git -C /Volumes/dongminyu/Development/01_personal/merry-setup status --short
+git status --short
 trunk init --yes-to-all --only-detected-linters --only-detected-formatters --no-progress
 ```
 
@@ -291,7 +291,7 @@ Expected: all black-box tests pass and no test reaches the network or the operat
 - Create: `.github/workflows/ci.yml`
 - Create: `.github/workflows/integration.yml`
 
-- [ ] Add the standard MIT text with `Copyright (c) 2026 Dongmin Yu` and no placeholder.
+- [x] Add the standard MIT text with `Copyright (c) 2026 Dongmin Yu` and no placeholder.
 - [ ] Update README with CLI and Action contracts, immutable-revision download-to-file examples, no `curl | bash`, environment contracts, target/tool boundaries, debug warning, and third-party license boundary.
 - [ ] Resolve every third-party workflow Action tag to a current verified full commit SHA before inserting it. Reject any value that is not exactly 40 hexadecimal characters.
 
@@ -326,7 +326,7 @@ Expected: public metadata and documentation pass their explicit linters. Local e
 /opt/homebrew/bin/shellcheck bin/merry-setup action/preflight.sh action/run.sh test/*.sh
 /opt/homebrew/bin/bash test/run.sh
 trunk check --no-fix --all
-git -C /Volumes/dongminyu/Development/01_personal/merry-setup diff --check
+git diff --check
 ```
 
 Expected: all local checks pass with no real SDK download and no unscoped file mutation.
@@ -335,7 +335,7 @@ Expected: all local checks pass with no real SDK download and no unscoped file m
 
 ```bash
 rg -n --hidden --glob '!.git/**' '[T]ODO|[T]BD|[P]LACEHOLDER|curl[^\n]*\|[^\n]*(bash|sh)|uses: [^@]+@(main|master|v[0-9]+)$' .
-git -C /Volumes/dongminyu/Development/01_personal/merry-setup status --short
+git status --short
 ```
 
 Expected: the audit prints no public boundary violation or unresolved placeholder; status lists only intended local implementation files and preserved pre-existing changes.
