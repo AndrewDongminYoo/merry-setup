@@ -8,6 +8,7 @@ readonly tests=(
   "${TEST_DIR}/action_preflight_test.sh"
   "${TEST_DIR}/action_adapter_test.sh"
   "${TEST_DIR}/action_metadata_test.sh"
+  "${TEST_DIR}/sdk_installation_test.sh"
 )
 
 for test_path in "${tests[@]}"; do

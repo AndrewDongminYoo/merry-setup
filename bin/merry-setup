@@ -5,6 +5,22 @@ if [[ ${DEBUG:-0} == 1 ]]; then
   set -x
 fi
 
+readonly MINIMUM_DART_RUNTIME=3.12.0
+readonly DART_RELEASE_BASE_URL=https://storage.googleapis.com/dart-archive/channels/stable/release
+readonly FLUTTER_RELEASES_URL=https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json
+readonly FLUTTER_RELEASE_BASE_URL=https://storage.googleapis.com/flutter_infra_release/releases
+
+ACTIVE_FAMILY_ROOT=""
+ACTIVE_METADATA_FILE=""
+ACTIVE_STAGE_DIR=""
+RESOLVED_SDK_VERSION=""
+RESOLVED_DART_VERSION=""
+RESOLVED_DART_ARCH=""
+RESOLVED_ARCHIVE_URL=""
+RESOLVED_ARCHIVE_SHA256=""
+CURRENT_SDK_ROOT=""
+HOST_ARCHITECTURE=""
+
 die() {
   printf 'ERROR: %s\n' "$*" >&2
   exit 1
@@ -45,6 +61,490 @@ validate_host() {
 
   [[ ${host_os} == Linux ]] || die "Unsupported operating system: ${host_os}. The initial release supports Linux x64 only."
   [[ ${host_arch} == x86_64 ]] || die "Unsupported architecture: ${host_arch}. The initial release supports Linux x64 only."
+  HOST_ARCHITECTURE="${host_arch}"
+}
+
+cleanup_sdk_transients() {
+  if [[ -n ${ACTIVE_METADATA_FILE} && -n ${ACTIVE_FAMILY_ROOT} && ${ACTIVE_METADATA_FILE} == "${ACTIVE_FAMILY_ROOT}/.metadata."* ]]; then
+    rm -f -- "${ACTIVE_METADATA_FILE}"
+  fi
+
+  if [[ -n ${ACTIVE_STAGE_DIR} && -n ${ACTIVE_FAMILY_ROOT} && ${ACTIVE_STAGE_DIR} == "${ACTIVE_FAMILY_ROOT}/."*.staging.* ]]; then
+    rm -rf -- "${ACTIVE_STAGE_DIR}"
+  fi
+}
+
+trap cleanup_sdk_transients EXIT
+
+is_exact_semver() {
+  local version_value="$1"
+  local version_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+
+  [[ ${version_value} =~ ${version_pattern} ]]
+}
+
+extract_first_semver() {
+  local source_value="$1"
+  local version_pattern='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+
+  if [[ ${source_value} =~ ${version_pattern} ]]; then
+    printf '%s.%s.%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+    return 0
+  fi
+
+  return 1
+}
+
+version_is_at_least() {
+  local candidate_version="$1"
+  local minimum_version="$2"
+  local candidate_major=0
+  local candidate_minor=0
+  local candidate_patch=0
+  local minimum_major=0
+  local minimum_minor=0
+  local minimum_patch=0
+
+  is_exact_semver "${candidate_version}" || return 1
+  is_exact_semver "${minimum_version}" || return 1
+
+  IFS=. read -r candidate_major candidate_minor candidate_patch <<<"${candidate_version}"
+  IFS=. read -r minimum_major minimum_minor minimum_patch <<<"${minimum_version}"
+
+  ((10#${candidate_major} > 10#${minimum_major})) && return 0
+  ((10#${candidate_major} < 10#${minimum_major})) && return 1
+  ((10#${candidate_minor} > 10#${minimum_minor})) && return 0
+  ((10#${candidate_minor} < 10#${minimum_minor})) && return 1
+  ((10#${candidate_patch} >= 10#${minimum_patch}))
+}
+
+require_minimum_dart_runtime() {
+  local dart_version="$1"
+
+  version_is_at_least "${dart_version}" "${MINIMUM_DART_RUNTIME}" || die "Effective Dart runtime ${dart_version} is below the minimum ${MINIMUM_DART_RUNTIME}."
+}
+
+download_file() {
+  local source_url="$1"
+  local destination_file="$2"
+  local description="$3"
+
+  command -v curl >/dev/null 2>&1 || die "curl is required to download ${description}."
+  if ! curl --fail --silent --show-error --location --output "${destination_file}" "${source_url}"; then
+    die "Failed to download ${description}: ${source_url}"
+  fi
+  [[ -s ${destination_file} ]] || die "Downloaded ${description} is empty: ${source_url}"
+}
+
+json_single_string_value() {
+  local metadata_file="$1"
+  local field_name="$2"
+  local field_pattern='^[[:space:]]*"'"${field_name}"'"[[:space:]]*:[[:space:]]*"([^"\\]*)"[[:space:]]*,?[[:space:]]*$'
+  local metadata_line=""
+  local -a field_values=()
+
+  while IFS= read -r metadata_line || [[ -n ${metadata_line} ]]; do
+    if [[ ${metadata_line} =~ ${field_pattern} ]]; then
+      field_values+=("${BASH_REMATCH[1]}")
+    fi
+  done <"${metadata_file}"
+
+  [[ ${#field_values[@]} -eq 1 ]] || return 1
+  printf '%s\n' "${field_values[0]}"
+}
+
+narrow_json_document_is_valid() {
+  local metadata_file="$1"
+  local metadata_line=""
+  local container_type=""
+  local trailing_comma=""
+  local depth=-1
+  local parent_depth=-1
+  local root_seen=false
+  local root_closed=false
+  local scalar_pattern='^[[:space:]]*"[a-z0-9_]+"[[:space:]]*:[[:space:]]*"[^"\\]*"[[:space:]]*([,]?)[[:space:]]*$'
+  local object_member_pattern='^[[:space:]]*"[a-z0-9_]+"[[:space:]]*:[[:space:]]*\{[[:space:]]*$'
+  local array_member_pattern='^[[:space:]]*"[a-z0-9_]+"[[:space:]]*:[[:space:]]*\[[[:space:]]*$'
+  local close_object_pattern='^[[:space:]]*\}([,]?)[[:space:]]*$'
+  local close_array_pattern='^[[:space:]]*\]([,]?)[[:space:]]*$'
+  local -a container_types=()
+  local -a item_counts=()
+  local -a last_item_had_comma=()
+
+  while IFS= read -r metadata_line || [[ -n ${metadata_line} ]]; do
+    [[ -n ${metadata_line//[[:space:]]/} ]] || continue
+
+    if [[ ${metadata_line} =~ ^[[:space:]]*\{[[:space:]]*$ ]]; then
+      if ((depth < 0)); then
+        [[ ${root_seen} == false && ${root_closed} == false ]] || return 1
+        root_seen=true
+      else
+        [[ ${container_types[depth]} == array ]] || return 1
+        [[ ${item_counts[depth]} -eq 0 || ${last_item_had_comma[depth]} == true ]] || return 1
+      fi
+      ((depth += 1))
+      container_types[depth]=object
+      item_counts[depth]=0
+      last_item_had_comma[depth]=false
+      continue
+    fi
+
+    ((depth >= 0)) || return 1
+
+    if [[ ${metadata_line} =~ ${scalar_pattern} ]]; then
+      [[ ${container_types[depth]} == object ]] || return 1
+      [[ ${item_counts[depth]} -eq 0 || ${last_item_had_comma[depth]} == true ]] || return 1
+      ((item_counts[depth] += 1))
+      [[ ${BASH_REMATCH[1]} == , ]] && last_item_had_comma[depth]=true || last_item_had_comma[depth]=false
+      continue
+    fi
+
+    if [[ ${metadata_line} =~ ${object_member_pattern} || ${metadata_line} =~ ${array_member_pattern} ]]; then
+      [[ ${container_types[depth]} == object ]] || return 1
+      [[ ${item_counts[depth]} -eq 0 || ${last_item_had_comma[depth]} == true ]] || return 1
+      container_type=object
+      [[ ${metadata_line} =~ ${array_member_pattern} ]] && container_type=array
+      ((depth += 1))
+      container_types[depth]="${container_type}"
+      item_counts[depth]=0
+      last_item_had_comma[depth]=false
+      continue
+    fi
+
+    trailing_comma=""
+    if [[ ${metadata_line} =~ ${close_object_pattern} ]]; then
+      [[ ${container_types[depth]} == object ]] || return 1
+      trailing_comma="${BASH_REMATCH[1]}"
+    elif [[ ${metadata_line} =~ ${close_array_pattern} ]]; then
+      [[ ${container_types[depth]} == array ]] || return 1
+      trailing_comma="${BASH_REMATCH[1]}"
+    else
+      return 1
+    fi
+
+    [[ ${item_counts[depth]} -gt 0 && ${last_item_had_comma[depth]} == false ]] || return 1
+    unset 'container_types[depth]' 'item_counts[depth]' 'last_item_had_comma[depth]'
+    ((depth -= 1))
+
+    if ((depth < 0)); then
+      [[ ${trailing_comma} != , && ${root_closed} == false ]] || return 1
+      root_closed=true
+      continue
+    fi
+
+    parent_depth="${depth}"
+    ((item_counts[parent_depth] += 1))
+    [[ ${trailing_comma} == , ]] && last_item_had_comma[parent_depth]=true || last_item_had_comma[parent_depth]=false
+  done <"${metadata_file}"
+
+  [[ ${root_seen} == true && ${root_closed} == true && ${depth} -eq -1 ]]
+}
+
+prepare_family_root() {
+  local sdk_family="$1"
+
+  ACTIVE_FAMILY_ROOT="${MERRY_SETUP_HOME}/sdks/${sdk_family}"
+  mkdir -p -- "${ACTIVE_FAMILY_ROOT}"
+}
+
+download_release_metadata() {
+  local metadata_url="$1"
+  local description="$2"
+
+  ACTIVE_METADATA_FILE="$(mktemp "${ACTIVE_FAMILY_ROOT}/.metadata.XXXXXX")"
+  download_file "${metadata_url}" "${ACTIVE_METADATA_FILE}" "${description}"
+}
+
+resolve_dart_release() {
+  local requested_version="$1"
+  local metadata_version=""
+
+  RESOLVED_ARCHIVE_SHA256=""
+  if [[ ${requested_version} == stable ]]; then
+    download_release_metadata "${DART_RELEASE_BASE_URL}/latest/VERSION" "Dart release metadata"
+    narrow_json_document_is_valid "${ACTIVE_METADATA_FILE}" || die "Dart release metadata is incomplete or malformed."
+    if ! metadata_version="$(json_single_string_value "${ACTIVE_METADATA_FILE}" version)" || ! is_exact_semver "${metadata_version}"; then
+      die "Dart release metadata does not contain exactly one valid version."
+    fi
+    RESOLVED_SDK_VERSION="${metadata_version}"
+  else
+    is_exact_semver "${requested_version}" || die "Dart SDK version must be 'stable' or an exact stable semantic version."
+    RESOLVED_SDK_VERSION="${requested_version}"
+  fi
+
+  RESOLVED_DART_VERSION="${RESOLVED_SDK_VERSION}"
+  require_minimum_dart_runtime "${RESOLVED_DART_VERSION}"
+  RESOLVED_ARCHIVE_URL="${DART_RELEASE_BASE_URL}/${RESOLVED_SDK_VERSION}/sdk/dartsdk-linux-x64-release.zip"
+}
+
+parse_flutter_release_record() {
+  local metadata_file="$1"
+  local requested_version="$2"
+  local current_stable_hash=""
+  local metadata_line=""
+  local field_name=""
+  local field_value=""
+  local record_hash=""
+  local record_channel=""
+  local record_version=""
+  local record_dart_version=""
+  local record_arch=""
+  local record_archive=""
+  local record_sha256=""
+  local selected_count=0
+  local in_releases=false
+  local in_record=false
+  local releases_count=0
+  local saw_releases_end=false
+  local releases_pattern='^[[:space:]]*"releases"[[:space:]]*:[[:space:]]*\[[[:space:]]*$'
+  local field_pattern='^[[:space:]]*"([a-z0-9_]+)"[[:space:]]*:[[:space:]]*"([^"\\]*)"[[:space:]]*,?[[:space:]]*$'
+
+  if [[ ${requested_version} == stable ]]; then
+    current_stable_hash="$(json_single_string_value "${metadata_file}" stable)" || die "Flutter release metadata does not contain exactly one current stable hash."
+    [[ -n ${current_stable_hash} ]] || die "Flutter release metadata does not contain exactly one current stable hash."
+  else
+    is_exact_semver "${requested_version}" || die "Flutter SDK version must be 'stable' or an exact stable semantic version."
+  fi
+
+  while IFS= read -r metadata_line || [[ -n ${metadata_line} ]]; do
+    if [[ ${metadata_line} =~ ${releases_pattern} ]]; then
+      ((releases_count += 1))
+      [[ ${releases_count} -eq 1 ]] || die "Flutter release metadata is incomplete or malformed."
+      in_releases=true
+      continue
+    fi
+    [[ ${in_releases} == true ]] || continue
+
+    if [[ ${in_record} == false && ${metadata_line} =~ ^[[:space:]]*\{[[:space:]]*$ ]]; then
+      in_record=true
+      record_hash=""
+      record_channel=""
+      record_version=""
+      record_dart_version=""
+      record_arch=""
+      record_archive=""
+      record_sha256=""
+      continue
+    fi
+
+    if [[ ${in_record} == true && ${metadata_line} =~ ${field_pattern} ]]; then
+      field_name="${BASH_REMATCH[1]}"
+      field_value="${BASH_REMATCH[2]}"
+      case "${field_name}" in
+      hash) [[ -z ${record_hash} ]] || die "Flutter release metadata contains a duplicate release field."; record_hash="${field_value}" ;;
+      channel) [[ -z ${record_channel} ]] || die "Flutter release metadata contains a duplicate release field."; record_channel="${field_value}" ;;
+      version) [[ -z ${record_version} ]] || die "Flutter release metadata contains a duplicate release field."; record_version="${field_value}" ;;
+      dart_sdk_version) [[ -z ${record_dart_version} ]] || die "Flutter release metadata contains a duplicate release field."; record_dart_version="${field_value}" ;;
+      dart_sdk_arch) [[ -z ${record_arch} ]] || die "Flutter release metadata contains a duplicate release field."; record_arch="${field_value}" ;;
+      archive) [[ -z ${record_archive} ]] || die "Flutter release metadata contains a duplicate release field."; record_archive="${field_value}" ;;
+      sha256) [[ -z ${record_sha256} ]] || die "Flutter release metadata contains a duplicate release field."; record_sha256="${field_value}" ;;
+      esac
+      continue
+    fi
+
+    if [[ ${in_record} == true && ${metadata_line} =~ ^[[:space:]]*\}[,]?[[:space:]]*$ ]]; then
+      in_record=false
+      if [[ ${record_channel} == stable ]] && { [[ ${requested_version} == stable && ${record_hash} == "${current_stable_hash}" ]] || [[ ${requested_version} != stable && ${record_version} == "${requested_version}" ]]; }; then
+        ((selected_count += 1))
+        RESOLVED_SDK_VERSION="${record_version}"
+        RESOLVED_DART_VERSION="${record_dart_version}"
+        RESOLVED_DART_ARCH="${record_arch}"
+        RESOLVED_ARCHIVE_URL="${record_archive}"
+        RESOLVED_ARCHIVE_SHA256="${record_sha256}"
+      fi
+      continue
+    fi
+
+    if [[ ${in_record} == false && ${metadata_line} =~ ^[[:space:]]*\][,]?[[:space:]]*$ ]]; then
+      saw_releases_end=true
+      in_releases=false
+    fi
+  done <"${metadata_file}"
+
+  [[ ${releases_count} -eq 1 && ${saw_releases_end} == true && ${in_record} == false ]] || die "Flutter release metadata is incomplete or malformed."
+  [[ ${selected_count} -eq 1 ]] || die "Flutter release metadata does not contain exactly one selected stable release."
+}
+
+resolve_flutter_release() {
+  local requested_version="$1"
+  local base_url=""
+  local runtime_version=""
+  local checksum_pattern='^[0-9a-fA-F]{64}$'
+
+  download_release_metadata "${FLUTTER_RELEASES_URL}" "Flutter release metadata"
+  narrow_json_document_is_valid "${ACTIVE_METADATA_FILE}" || die "Flutter release metadata is incomplete or malformed."
+  base_url="$(json_single_string_value "${ACTIVE_METADATA_FILE}" base_url)" || die "Flutter release metadata does not contain exactly one base URL."
+  [[ ${base_url} == "${FLUTTER_RELEASE_BASE_URL}" ]] || die "Flutter release metadata contains an unsupported base URL."
+
+  parse_flutter_release_record "${ACTIVE_METADATA_FILE}" "${requested_version}"
+  if [[ -z ${RESOLVED_SDK_VERSION} || -z ${RESOLVED_DART_VERSION} || -z ${RESOLVED_ARCHIVE_URL} ]]; then
+    die "Flutter release metadata is incomplete."
+  fi
+  is_exact_semver "${RESOLVED_SDK_VERSION}" || die "Flutter release metadata contains an invalid stable version."
+  [[ ${RESOLVED_DART_ARCH} == x64 ]] || die "Flutter release metadata does not provide Linux x64."
+  [[ ${RESOLVED_ARCHIVE_SHA256} =~ ${checksum_pattern} ]] || die "Flutter release metadata does not contain a valid checksum."
+  [[ ${RESOLVED_ARCHIVE_URL} == stable/linux/* && ${RESOLVED_ARCHIVE_URL} != *../* ]] || die "Flutter release metadata contains an invalid archive path."
+
+  runtime_version="$(extract_first_semver "${RESOLVED_DART_VERSION}")" || die "Flutter release metadata contains an invalid bundled Dart version."
+  RESOLVED_DART_VERSION="${runtime_version}"
+  require_minimum_dart_runtime "${RESOLVED_DART_VERSION}"
+  RESOLVED_ARCHIVE_URL="${base_url}/${RESOLVED_ARCHIVE_URL}"
+  RESOLVED_ARCHIVE_SHA256="${RESOLVED_ARCHIVE_SHA256,,}"
+}
+
+parse_dart_checksum() {
+  local checksum_file="$1"
+  local checksum_line=""
+  local checksum_pattern='^([0-9a-fA-F]{64})[[:space:]]+\*?dartsdk-linux-x64-release\.zip$'
+  local -a checksum_lines=()
+
+  while IFS= read -r checksum_line || [[ -n ${checksum_line} ]]; do
+    [[ -n ${checksum_line} ]] && checksum_lines+=("${checksum_line}")
+  done <"${checksum_file}"
+
+  [[ ${#checksum_lines[@]} -eq 1 && ${checksum_lines[0]} =~ ${checksum_pattern} ]] || die "Dart checksum metadata is missing or invalid."
+  RESOLVED_ARCHIVE_SHA256="${BASH_REMATCH[1],,}"
+}
+
+extract_machine_value() {
+  local machine_output="$1"
+  local field_name="$2"
+  local field_pattern='"'"${field_name}"'"[[:space:]]*:[[:space:]]*"([^"\\]+)"'
+
+  [[ ${machine_output} =~ ${field_pattern} ]] || return 1
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+sdk_installation_is_valid() {
+  local sdk_root="$1"
+  local sdk_family="$2"
+  local expected_sdk_version="$3"
+  local expected_dart_version="$4"
+  local dart_output=""
+  local actual_dart_version=""
+  local flutter_output=""
+  local actual_flutter_version=""
+
+  [[ ! -L ${sdk_root} && -d ${sdk_root} ]] || return 1
+  [[ -x ${sdk_root}/bin/dart ]] || return 1
+  if [[ ${sdk_family} == dart ]]; then
+    [[ -f ${sdk_root}/include/dart_api.h && ! -L ${sdk_root}/include/dart_api.h ]] || return 1
+    [[ ! -e ${sdk_root}/bin/flutter && ! -L ${sdk_root}/bin/flutter ]] || return 1
+  fi
+  dart_output="$("${sdk_root}/bin/dart" --version 2>&1)" || return 1
+  actual_dart_version="$(extract_first_semver "${dart_output}")" || return 1
+  [[ ${actual_dart_version} == "${expected_dart_version}" ]] || return 1
+  version_is_at_least "${actual_dart_version}" "${MINIMUM_DART_RUNTIME}" || return 1
+
+  if [[ ${sdk_family} == flutter ]]; then
+    [[ -x ${sdk_root}/bin/flutter ]] || return 1
+    flutter_output="$("${sdk_root}/bin/flutter" --version --machine 2>&1)" || return 1
+    actual_flutter_version="$(extract_machine_value "${flutter_output}" frameworkVersion)" || return 1
+    actual_dart_version="$(extract_machine_value "${flutter_output}" dartSdkVersion)" || return 1
+    actual_dart_version="$(extract_first_semver "${actual_dart_version}")" || return 1
+    [[ ${actual_flutter_version} == "${expected_sdk_version}" && ${actual_dart_version} == "${expected_dart_version}" ]] || return 1
+  fi
+}
+
+verify_archive_checksum() {
+  local archive_file="$1"
+  local expected_checksum="$2"
+  local checksum_output=""
+  local actual_checksum=""
+  local checksum_pattern='^[0-9a-fA-F]{64}$'
+
+  command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required to verify SDK archives."
+  checksum_output="$(sha256sum "${archive_file}")" || die "Failed to calculate SDK archive checksum."
+  actual_checksum="${checksum_output%%[[:space:]]*}"
+  [[ ${actual_checksum} =~ ${checksum_pattern} ]] || die "sha256sum returned an invalid SDK archive checksum."
+  [[ ${actual_checksum,,} == "${expected_checksum,,}" ]] || die "SDK archive checksum mismatch."
+}
+
+install_resolved_sdk() {
+  local sdk_family="$1"
+  local family_label="Dart"
+  local final_sdk="${ACTIVE_FAMILY_ROOT}/${RESOLVED_SDK_VERSION}"
+  local archive_file=""
+  local checksum_file=""
+  local extract_root=""
+  local staged_sdk=""
+  local publish_command_succeeded=false
+
+  [[ ${sdk_family} == flutter ]] && family_label=Flutter
+
+  if [[ -e ${final_sdk} || -L ${final_sdk} ]]; then
+    if sdk_installation_is_valid "${final_sdk}" "${sdk_family}" "${RESOLVED_SDK_VERSION}" "${RESOLVED_DART_VERSION}"; then
+      CURRENT_SDK_ROOT="${final_sdk}"
+      printf 'Reusing %s SDK %s from %s\n' "${family_label}" "${RESOLVED_SDK_VERSION}" "${final_sdk}"
+      return 0
+    fi
+    die "Existing ${family_label} SDK installation is invalid: ${final_sdk}. Remove or repair this directory before retrying."
+  fi
+
+  ACTIVE_STAGE_DIR="$(mktemp -d "${ACTIVE_FAMILY_ROOT}/.${RESOLVED_SDK_VERSION}.staging.XXXXXX")"
+  archive_file="${ACTIVE_STAGE_DIR}/sdk-archive"
+  extract_root="${ACTIVE_STAGE_DIR}/extract"
+  mkdir -p -- "${extract_root}"
+
+  if [[ ${sdk_family} == dart ]]; then
+    checksum_file="${ACTIVE_STAGE_DIR}/sdk-archive.sha256sum"
+    download_file "${RESOLVED_ARCHIVE_URL}.sha256sum" "${checksum_file}" "Dart SDK checksum metadata"
+    parse_dart_checksum "${checksum_file}"
+  fi
+
+  download_file "${RESOLVED_ARCHIVE_URL}" "${archive_file}" "${family_label} SDK archive"
+  verify_archive_checksum "${archive_file}" "${RESOLVED_ARCHIVE_SHA256}"
+
+  if [[ ${sdk_family} == dart ]]; then
+    command -v unzip >/dev/null 2>&1 || die "unzip is required to extract the Dart SDK archive."
+    unzip -q "${archive_file}" -d "${extract_root}" || die "Failed to extract Dart SDK archive."
+    staged_sdk="${extract_root}/dart-sdk"
+  else
+    command -v tar >/dev/null 2>&1 || die "tar is required to extract the Flutter SDK archive."
+    tar -xJf "${archive_file}" -C "${extract_root}" || die "Failed to extract Flutter SDK archive."
+    staged_sdk="${extract_root}/flutter"
+  fi
+
+  if ! sdk_installation_is_valid "${staged_sdk}" "${sdk_family}" "${RESOLVED_SDK_VERSION}" "${RESOLVED_DART_VERSION}"; then
+    die "Staged ${family_label} SDK does not match release metadata."
+  fi
+
+  if mv --no-clobber --no-target-directory -- "${staged_sdk}" "${final_sdk}"; then
+    publish_command_succeeded=true
+  fi
+
+  if [[ ${publish_command_succeeded} == true && ! -e ${staged_sdk} && ! -L ${staged_sdk} ]] && sdk_installation_is_valid "${final_sdk}" "${sdk_family}" "${RESOLVED_SDK_VERSION}" "${RESOLVED_DART_VERSION}"; then
+    CURRENT_SDK_ROOT="${final_sdk}"
+  elif [[ -e ${final_sdk} || -L ${final_sdk} ]] && sdk_installation_is_valid "${final_sdk}" "${sdk_family}" "${RESOLVED_SDK_VERSION}" "${RESOLVED_DART_VERSION}"; then
+    CURRENT_SDK_ROOT="${final_sdk}"
+    printf 'Reusing concurrently published %s SDK %s from %s\n' "${family_label}" "${RESOLVED_SDK_VERSION}" "${final_sdk}"
+  else
+    die "Failed to publish ${family_label} SDK ${RESOLVED_SDK_VERSION} atomically."
+  fi
+
+  printf 'Installed %s SDK %s at %s\n' "${family_label}" "${RESOLVED_SDK_VERSION}" "${CURRENT_SDK_ROOT}"
+}
+
+log_resolved_sdk() {
+  local sdk_family="$1"
+  local executable_name=dart
+
+  [[ ${sdk_family} == flutter ]] && executable_name=flutter
+  printf 'Resolved SDK: family=%s version=%s host_architecture=%s executable=%s/bin/%s\n' "${sdk_family}" "${RESOLVED_SDK_VERSION}" "${HOST_ARCHITECTURE}" "${CURRENT_SDK_ROOT}" "${executable_name}"
+}
+
+resolve_and_install_sdk() {
+  local sdk_family="$1"
+  local requested_version="$2"
+
+  prepare_family_root "${sdk_family}"
+  if [[ ${sdk_family} == dart ]]; then
+    resolve_dart_release "${requested_version}"
+  else
+    resolve_flutter_release "${requested_version}"
+  fi
+  install_resolved_sdk "${sdk_family}"
+  log_resolved_sdk "${sdk_family}"
 }
 
 main() {
@@ -201,8 +701,14 @@ main() {
 
   validate_host
 
-  : "${sdk_version}" "${dart_packages[*]-}" "${bundles[*]-}" "${firebase_tools_version}" "${trunk_path}"
-  die "Command validation passed, but SDK execution is not implemented in this development snapshot."
+  if [[ ${command_name} == bootstrap ]]; then
+    die "Command validation passed, but bootstrap-only execution is not implemented in this development snapshot."
+  fi
+
+  resolve_and_install_sdk "${sdk_family}" "${sdk_version}"
+
+  : "${dart_packages[*]-}" "${bundles[*]-}" "${firebase_tools_version}" "${trunk_path}" "${CURRENT_SDK_ROOT}"
+  die "SDK installation completed. Remaining setup steps are not implemented in this development snapshot."
 }
 
 main "$@"
