@@ -101,6 +101,18 @@ extract_first_semver() {
   return 1
 }
 
+extract_first_reported_version() {
+  local source_value="$1"
+  local version_pattern='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?'
+
+  if [[ ${source_value} =~ ${version_pattern} ]]; then
+    printf '%s\n' "${BASH_REMATCH[0]}"
+    return 0
+  fi
+
+  return 1
+}
+
 version_is_at_least() {
   local candidate_version="$1"
   local minimum_version="$2"
@@ -713,7 +725,7 @@ log_known_tool_version() {
   tool_path="${PUB_CACHE}/bin/${tool_executable}"
   [[ -x ${tool_path} ]] || die "Activated Dart package '${package_name}' did not provide the expected executable: ${tool_path}"
   tool_output="$("${tool_path}" --version 2>&1)" || die "Failed to read the version of activated Dart package '${package_name}'."
-  tool_version="$(extract_first_semver "${tool_output}")" || die "Activated Dart package '${package_name}' returned an invalid version."
+  tool_version="$(extract_first_reported_version "${tool_output}")" || die "Activated Dart package '${package_name}' returned an invalid version."
   printf 'Tool version: package=%s executable=%s version=%s\n' "${package_name}" "${tool_executable}" "${tool_version}"
 }
 

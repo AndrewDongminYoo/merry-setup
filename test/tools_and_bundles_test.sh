@@ -7,6 +7,7 @@ readonly TOOLS_TEST_DIR
 if [[ -z ${MERRY_SETUP_TEST_CASE:-} ]]; then
   readonly cases=(
     managed_dart_cache_and_merry
+    prerelease_tool_version
     stable_managed_cache
     managed_flutter_cache
     explicit_pub_cache
@@ -110,7 +111,7 @@ write_dart_executable() {
     '  package_name="${4:-}"' \
     '  if [[ ${DART_ACTIVATE_FAIL_PACKAGE:-} == "${package_name}" ]]; then exit 17; fi' \
     '  mkdir -p "${PUB_CACHE}/bin"' \
-    '  printf '\''%s 9.9.9\n'\'' "${package_name}" >>"${PUB_CACHE}/.global-list"' \
+    '  printf '\''%s %s\n'\'' "${package_name}" "${DART_TOOL_VERSION:-9.9.9}" >>"${PUB_CACHE}/.global-list"' \
     '  tool_name=""' \
     '  case "${package_name}" in' \
     '  merry | melos) tool_name="${package_name}" ;;' \
@@ -119,7 +120,7 @@ write_dart_executable() {
     '  node_tool) tool_name=node ;;' \
     '  esac' \
     '  if [[ -n ${tool_name} ]]; then' \
-    '    printf '\''#!/usr/bin/env bash\nprintf "CALL %s|%%s\\n" "$@" >>"%s"\nprintf "9.9.9\\n"\n'\'' "${tool_name}" "${TEST_COMMAND_LOG}" >"${PUB_CACHE}/bin/${tool_name}"' \
+    '    printf '\''#!/usr/bin/env bash\nprintf "CALL %s|%%s\\n" "$@" >>"%s"\nprintf "%%s\\n" "${DART_TOOL_VERSION:-9.9.9}"\n'\'' "${tool_name}" "${TEST_COMMAND_LOG}" >"${PUB_CACHE}/bin/${tool_name}"' \
     '    chmod +x "${PUB_CACHE}/bin/${tool_name}"' \
     '  fi' \
     '  exit 0' \
@@ -278,6 +279,16 @@ case_managed_dart_cache_and_merry() {
   assert_stdout_contains 'Tool version: package=merry executable=merry version=9.9.9'
   assert_log_excludes '|install|'
   pass "managed Dart cache activates Merry by default"
+}
+
+case_prerelease_tool_version() {
+  prepare_dart_case
+  export DART_TOOL_VERSION='9.9.9-dev.1+build.4'
+  run_setup dart 3.12.0 none
+  assert_nonzero
+  assert_stdout_contains 'Activated Dart package: name=merry version=9.9.9-dev.1+build.4'
+  assert_stdout_contains 'Tool version: package=merry executable=merry version=9.9.9-dev.1+build.4'
+  pass "tool version logs preserve prerelease and build suffixes"
 }
 
 case_stable_managed_cache() {
