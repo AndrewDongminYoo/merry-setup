@@ -43,6 +43,7 @@ if [[ -z ${MERRY_SETUP_TEST_CASE:-} ]]; then
     flutterfire_uses_npm_prefix_executable
     flutterfire_uses_validated_npm
     invalid_npm_prefix
+    flutterfire_precedes_activated_node
     missing_npm
     failed_npm_install
     failed_activation_preserves_cache
@@ -115,6 +116,7 @@ write_dart_executable() {
     '  merry | melos) tool_name="${package_name}" ;;' \
     '  very_good_cli) tool_name=very_good ;;' \
     '  flutterfire_cli) tool_name=flutterfire ;;' \
+    '  node_tool) tool_name=node ;;' \
     '  esac' \
     '  if [[ -n ${tool_name} ]]; then' \
     '    printf '\''#!/usr/bin/env bash\nprintf "CALL %s|%%s\\n" "$@" >>"%s"\nprintf "9.9.9\\n"\n'\'' "${tool_name}" "${TEST_COMMAND_LOG}" >"${PUB_CACHE}/bin/${tool_name}"' \
@@ -185,7 +187,7 @@ create_npm_stub() {
 
   # shellcheck disable=SC2016 # The generated stub expands its runtime environment.
   printf '%s\n' \
-    '#!/usr/bin/env bash' \
+    '#!/usr/bin/env node' \
     'set -euo pipefail' \
     'printf '\''CALL npm'\'' >>"${TEST_COMMAND_LOG}"' \
     'printf '\''|%s'\'' "$@" >>"${TEST_COMMAND_LOG}"' \
@@ -198,6 +200,13 @@ create_npm_stub() {
     'mkdir -p "${NPM_GLOBAL_PREFIX}/bin"' \
     'printf '\''#!/usr/bin/env bash\nprintf "CALL npm-prefix-firebase|%%s\\n" "$@" >>"%s"\nprintf "%%s\\n" "%s"\n'\'' "${TEST_COMMAND_LOG}" "${firebase_version}" >"${NPM_GLOBAL_PREFIX}/bin/firebase"' \
     'chmod +x "${NPM_GLOBAL_PREFIX}/bin/firebase"' >"${stub_path}"
+  chmod +x "${stub_path}"
+}
+
+create_node_stub() {
+  local stub_path="${TEST_ROOT}/commands/node"
+
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'exec /bin/bash "$@"' >"${stub_path}"
   chmod +x "${stub_path}"
 }
 
@@ -242,6 +251,7 @@ prepare_dart_case() {
   create_host_stub
   create_metadata_stub
   create_npm_stub
+  create_node_stub
   create_dart_sdk "${sdk_version}"
   export DART_VERSION_FIXTURE="${FIXTURE_DIR}/dart-version-3.12.0.json"
   export FLUTTER_RELEASES_FIXTURE="${FIXTURE_DIR}/flutter-releases.json"
@@ -251,6 +261,7 @@ prepare_flutter_case() {
   create_host_stub
   create_metadata_stub
   create_npm_stub
+  create_node_stub
   create_flutter_sdk 3.44.0 3.12.0
   export DART_VERSION_FIXTURE="${FIXTURE_DIR}/dart-version-3.12.0.json"
   export FLUTTER_RELEASES_FIXTURE="${FIXTURE_DIR}/flutter-releases.json"
@@ -623,6 +634,17 @@ case_invalid_npm_prefix() {
   assert_log_excludes 'CALL npm|install|--global|firebase-tools'
   assert_path_absent "${NPM_GLOBAL_PREFIX}"
   pass "invalid npm prefix fails before global installation"
+}
+
+case_flutterfire_precedes_activated_node() {
+  prepare_flutter_case
+  run_setup flutter 3.44.0 none --bundle flutterfire --dart-package node_tool --no-merry
+  assert_nonzero
+  assert_log_contains 'CALL npm|prefix|--global'
+  assert_log_contains 'CALL npm|install|--global|firebase-tools'
+  assert_log_excludes 'CALL node|'
+  assert_stdout_contains 'Firebase Tools version: 15.0.0'
+  pass "FlutterFire npm runs before activated tools change PATH"
 }
 
 case_missing_npm() {

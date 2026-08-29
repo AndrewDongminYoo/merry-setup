@@ -22,6 +22,7 @@ CURRENT_SDK_ROOT=""
 HOST_ARCHITECTURE=""
 FLUTTERFIRE_BUNDLE_ENABLED=false
 NPM_EXECUTABLE=""
+NPM_GLOBAL_BIN=""
 declare -a ACTIVATION_PACKAGE_NAMES=()
 declare -a ACTIVATION_PACKAGE_CONSTRAINTS=()
 declare -A ACTIVATION_PACKAGE_INDEX=()
@@ -677,7 +678,7 @@ resolve_pub_cache() {
   export PUB_CACHE
 
   mkdir -p -- "${PUB_CACHE}/bin"
-  PATH="${CURRENT_SDK_ROOT}/bin:${PUB_CACHE}/bin${PATH:+:${PATH}}"
+  PATH="${CURRENT_SDK_ROOT}/bin:${PUB_CACHE}/bin${NPM_GLOBAL_BIN:+:${NPM_GLOBAL_BIN}}${PATH:+:${PATH}}"
   export PATH
   printf 'Resolved PUB_CACHE: %s\n' "${PUB_CACHE}"
 }
@@ -779,11 +780,10 @@ install_flutterfire_bundle() {
   npm_global_prefix="$("${NPM_EXECUTABLE}" prefix --global)" || die "Failed to determine the npm global prefix."
   validate_absolute_path "npm global prefix" "${npm_global_prefix}"
   npm_global_bin="${npm_global_prefix}/bin"
+  NPM_GLOBAL_BIN="${npm_global_bin}"
   firebase_executable="${npm_global_bin}/firebase"
   "${NPM_EXECUTABLE}" install --global "${firebase_package}" || die "Failed to install Firebase Tools through npm."
   [[ -x ${firebase_executable} ]] || die "Firebase Tools was installed but the expected executable is unavailable: ${firebase_executable}"
-  PATH="${CURRENT_SDK_ROOT}/bin:${PUB_CACHE}/bin:${npm_global_bin}${PATH:+:${PATH}}"
-  export PATH
   firebase_output="$("${firebase_executable}" --version 2>&1)" || die "Failed to read the installed Firebase Tools version."
   actual_firebase_version="$(extract_first_semver "${firebase_output}")" || die "Firebase Tools returned an invalid version."
   if [[ -n ${firebase_tools_version} && ${actual_firebase_version} != "${firebase_tools_version}" ]]; then
@@ -956,9 +956,9 @@ main() {
   fi
 
   resolve_and_install_sdk "${sdk_family}" "${sdk_version}"
+  install_flutterfire_bundle "${firebase_tools_version}"
   resolve_pub_cache "${sdk_family}"
   activate_global_packages
-  install_flutterfire_bundle "${firebase_tools_version}"
 
   : "${trunk_path}" "${CURRENT_SDK_ROOT}"
   die "SDK installation completed. Remaining setup steps are not implemented in this development snapshot."
