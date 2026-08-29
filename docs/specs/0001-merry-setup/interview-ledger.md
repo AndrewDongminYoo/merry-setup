@@ -208,17 +208,18 @@ Recommended Answer:
 - Default `PUB_CACHE` to an SDK-family- and resolved-version-specific directory under `MERRY_SETUP_HOME`.
 - Honor an explicitly supplied standard `PUB_CACHE` value as an advanced override without adding a public Action input.
 - Export and persist both `PUB_CACHE` and its `bin` directory.
-- Share one mutable activation namespace among projects using the same SDK family and exact version, without adding project or activation-plan hashing in v1.
+- Share one mutable activation namespace among projects using the same SDK family and exact version, without adding project or activation-plan hashing or failed-plan rollback in v1.
 
 Answer: Approved.
 
-Decision: Unless the caller explicitly supplies `PUB_CACHE`, `merry-setup` must use `${MERRY_SETUP_HOME}/pub-cache/<family>/<resolved-version>`. The resolved cache must be used consistently for global package activation, tool execution, and project dependency bootstrap, and must be persisted alongside PATH when the selected adapter supports persistence.
+Decision: Unless the caller explicitly supplies `PUB_CACHE`, `merry-setup` must use `${MERRY_SETUP_HOME}/pub-cache/<family>/<resolved-version>`. An explicit managed-state or pub-cache path must be a nonempty absolute path without control characters or the PATH delimiter `:` because each resolved `bin` directory becomes one PATH entry. The resolved cache must be used consistently for global package activation, tool execution, and project dependency bootstrap, and must be persisted alongside PATH when the selected adapter supports persistence.
 
 Negative Requirements:
 - Do not silently fall back to `$HOME/.pub-cache`.
 - Do not expose a v1 Action input for the pub cache location.
 - Do not share the managed default cache across SDK families or exact SDK versions.
 - Do not add project-specific or activation-plan-specific cache hashing in v1.
+- Do not claim plan-level activation atomicity or rollback after a failed activation.
 - Do not claim concurrent activation safety for two setup processes sharing one resolved cache.
 - Do not automatically clean or delete old pub caches in v1.
 

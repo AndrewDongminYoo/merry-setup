@@ -206,11 +206,11 @@ Expected: every SDK path uses an exact resolved version, all error paths leave n
 - Modify: `bin/merry-setup`
 - Create: `test/tools_and_bundles_test.sh`
 
-- [ ] Write failing `PUB_CACHE` tests for managed family/version separation, explicit override priority, set-but-empty values, relative values, control characters, and Flutter cache keys based on the Flutter version.
-- [ ] Write failing package-plan tests for Merry default, `--no-merry`, Merry version conflict, name/constraint splitting, duplicate names, forbidden additional Merry, implicit Melos, implicit Very Good CLI, implicit FlutterFire CLI, and explicit constraints overriding only their implicit entry.
-- [ ] Write failing FlutterFire tests for duplicate bundles, missing npm, exact `firebase-tools` versions, npm default selection, invalid exact versions, and a standalone `flutterfire_cli` package causing no npm side effect.
-- [ ] Implement one name-keyed activation plan in Bash arrays and install each entry once through `dart pub global activate` with separate argv elements.
-- [ ] Resolve and export `PUB_CACHE` before activation, keep `${PUB_CACHE}/bin` ahead of unrelated global bins, log non-mutating tool versions when supported, and never invoke `dart install` or clear the cache after failure.
+- [x] Write failing `PUB_CACHE` tests for managed family/version separation, explicit override priority, set-but-empty values, relative values, control characters, and Flutter cache keys based on the Flutter version.
+- [x] Write failing package-plan tests for Merry default, `--no-merry`, Merry version conflict, name/constraint splitting, duplicate names, forbidden additional Merry, implicit Melos, implicit Very Good CLI, implicit FlutterFire CLI, and explicit constraints overriding only their implicit entry.
+- [x] Write failing FlutterFire tests for duplicate bundles, missing npm, exact `firebase-tools` versions, npm default selection, invalid exact versions, and a standalone `flutterfire_cli` package causing no npm side effect.
+- [x] Implement one name-keyed activation plan in Bash arrays and install each entry once through `dart pub global activate` with separate argv elements.
+- [x] Resolve and export `PUB_CACHE` before activation, keep `${PUB_CACHE}/bin` ahead of unrelated global bins, log non-mutating tool versions when supported, and never invoke `dart install` or clear the cache after failure.
 
 ```bash
 /opt/homebrew/bin/bash test/tools_and_bundles_test.sh

@@ -2,8 +2,8 @@
 
 `merry-setup` is a bootstrap tool for consistent Dart and Flutter development environments across Codex Cloud, GitHub Actions, and compatible Linux shells.
 
-The repository currently contains the approved product specification, implementation plan, Bash CLI, initial GitHub Composite Action adapter, and versioned Dart and Flutter SDK installation flow.
-Global tool activation, persistence, and project bootstrap are not implemented yet, so the CLI and Action are not ready for consumer use.
+The repository currently contains the approved product specification, implementation plan, Bash CLI, initial GitHub Composite Action adapter, versioned Dart and Flutter SDK installation flow, and SDK-scoped global tool activation with FlutterFire bundle support.
+Flutter precache, portable Trunk selection, persistence, and project bootstrap are not implemented yet, so the CLI and Action are not ready for consumer use.
 
 ## Planned Capabilities
 
