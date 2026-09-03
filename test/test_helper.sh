@@ -182,22 +182,70 @@ create_metadata_stub() {
   chmod +x "${stub_path}"
 }
 
+write_tool_shim_template() {
+  export TOOL_SHIM_TEMPLATE="${TEST_ROOT}/tool-shim-template"
+
+  cat >"${TOOL_SHIM_TEMPLATE}" <<'SHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'CALL %s|%s\n' "${0##*/}" "$*" >>"${TEST_COMMAND_LOG}"
+if [[ ${1:-} == --version ]]; then
+  printf '%s\n' "${DART_TOOL_VERSION:-9.9.9}"
+  exit 0
+fi
+exit "${TOOL_COMMAND_STATUS:-0}"
+SHIM
+  chmod +x "${TOOL_SHIM_TEMPLATE}"
+}
+
 write_dart_stub() {
   local dart_path="$1"
   local runtime_version="$2"
 
+  [[ -n ${TOOL_SHIM_TEMPLATE:-} ]] || write_tool_shim_template
   mkdir -p "$(dirname "${dart_path}")"
-  # shellcheck disable=SC2016 # The generated stub expands its runtime environment.
-  printf '%s\n' \
-    '#!/usr/bin/env bash' \
-    'set -euo pipefail' \
-    "readonly runtime_version='${runtime_version}'" \
-    'if [[ ${1:-} == --version ]]; then' \
-    '  printf '\''Dart SDK version: %s (stable) on linux_x64\n'\'' "${runtime_version}" >&2' \
-    '  exit 0' \
-    'fi' \
-    'printf '\''CALL dart|%s\n'\'' "$*" >>"${TEST_COMMAND_LOG}"' \
-    'exit 2' >"${dart_path}"
+  cat >"${dart_path}" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+readonly runtime_version='${runtime_version}'
+STUB
+  cat >>"${dart_path}" <<'STUB'
+if [[ ${1:-} == --version ]]; then
+  printf 'Dart SDK version: %s (stable) on linux_x64\n' "${runtime_version}" >&2
+  exit 0
+fi
+printf 'CALL dart|%s\n' "$*" >>"${TEST_COMMAND_LOG}"
+if [[ ${1:-} == pub && ${2:-} == global && ${3:-} == activate ]]; then
+  package_name="${4:-}"
+  if [[ ${DART_ACTIVATE_FAIL_PACKAGE:-} == "${package_name}" ]]; then exit 17; fi
+  mkdir -p "${PUB_CACHE}/bin"
+  if [[ -f ${PUB_CACHE}/.global-list ]]; then
+    while IFS= read -r listed_line; do
+      [[ ${listed_line%% *} == "${package_name}" ]] || printf '%s\n' "${listed_line}"
+    done <"${PUB_CACHE}/.global-list" >"${PUB_CACHE}/.global-list.tmp"
+    /bin/mv "${PUB_CACHE}/.global-list.tmp" "${PUB_CACHE}/.global-list"
+  fi
+  printf '%s %s\n' "${package_name}" "${DART_TOOL_VERSION:-9.9.9}" >>"${PUB_CACHE}/.global-list"
+  tool_name=""
+  case "${package_name}" in
+  merry | melos) tool_name="${package_name}" ;;
+  very_good_cli) tool_name=very_good ;;
+  flutterfire_cli) tool_name=flutterfire ;;
+  esac
+  if [[ -n ${tool_name} ]]; then
+    /bin/cp "${TOOL_SHIM_TEMPLATE}" "${PUB_CACHE}/bin/${tool_name}"
+  fi
+  exit 0
+fi
+if [[ ${1:-} == pub && ${2:-} == global && ${3:-} == list ]]; then
+  [[ ! -f ${PUB_CACHE}/.global-list ]] || cat "${PUB_CACHE}/.global-list"
+  exit 0
+fi
+if [[ ${1:-} == pub && ${2:-} == get ]]; then
+  exit "${PUB_GET_STATUS:-0}"
+fi
+exit 2
+STUB
   chmod +x "${dart_path}"
 }
 
@@ -226,6 +274,7 @@ create_flutter_sdk() {
     'fi' \
     'printf '\''CALL flutter|%s\n'\'' "$*" >>"${TEST_COMMAND_LOG}"' \
     'if [[ ${1:-} == precache ]]; then exit "${FLUTTER_PRECACHE_STATUS:-0}"; fi' \
+    'if [[ ${1:-} == pub && ${2:-} == get ]]; then exit "${PUB_GET_STATUS:-0}"; fi' \
     'exit 2' >"${sdk_root}/bin/flutter"
   chmod +x "${sdk_root}/bin/flutter"
 }

@@ -46,7 +46,23 @@ usage() {
   printf '%s\n' \
     'Usage:' \
     '  merry-setup setup --sdk dart|flutter --bootstrap STRATEGY --persist-path ADAPTER [options]' \
-    '  merry-setup bootstrap --sdk dart|flutter --bootstrap STRATEGY --persist-path ADAPTER [options]'
+    '  merry-setup bootstrap --sdk dart|flutter --bootstrap STRATEGY --persist-path ADAPTER [options]' \
+    '' \
+    'STRATEGY: none | dart | flutter | melos | very-good' \
+    'ADAPTER:  none | bashrc | github' \
+    '' \
+    'Options:' \
+    '  --sdk-version stable|<exact>       SDK version (default: stable)' \
+    '  --project-dir <path>               project root containing pubspec.yaml (default: current directory)' \
+    '  --no-merry                         skip the default merry activation' \
+    '  --merry-version <constraint>       pub constraint for merry' \
+    '  --dart-package <name>[=<constraint>]  additional global package (repeatable)' \
+    '  --bundle flutterfire               activate flutterfire_cli and install firebase-tools (repeatable)' \
+    '  --firebase-tools-version <exact>   exact firebase-tools version for the flutterfire bundle' \
+    '  --precache <targets>               comma-separated android, web, linux (repeatable; flutter only)' \
+    '  --trunk-path <path>                explicit Trunk launcher' \
+    '' \
+    'Environment: MERRY_SETUP_HOME (default ~/.merry-setup), PUB_CACHE (override), DEBUG=1 (trace)'
 }
 
 require_option_value() {
@@ -1008,6 +1024,91 @@ install_flutterfire_bundle() {
   printf 'Firebase Tools version: %s\n' "${actual_firebase_version}"
 }
 
+locate_path_sdk() {
+  local sdk_family="$1"
+  local requested_version="$2"
+  local executable_path=""
+  local sdk_root=""
+  local dart_output=""
+  local flutter_output=""
+  local machine_dart_version=""
+
+  executable_path="$(command -v "${sdk_family}")" || die "The ${sdk_family} executable was not found on PATH; run 'merry-setup setup' before 'merry-setup bootstrap'."
+  [[ ${executable_path} == /* && -x ${executable_path} ]] || die "The ${sdk_family} executable on PATH is not an absolute executable path: ${executable_path}"
+  if command -v readlink >/dev/null 2>&1; then
+    executable_path="$(readlink -f "${executable_path}")" || die "Failed to resolve the ${sdk_family} executable path: ${executable_path}"
+  fi
+  [[ ${executable_path%/*} == */bin ]] || die "The ${sdk_family} executable is not inside an SDK bin directory: ${executable_path}"
+  sdk_root="$(cd "${executable_path%/*}/.." && pwd -P)" || die "Failed to resolve the ${sdk_family} SDK root for ${executable_path}"
+
+  dart_output="$("${sdk_root}/bin/dart" --version 2>&1)" || die "The located Dart executable failed to report its version: ${sdk_root}/bin/dart"
+  RESOLVED_DART_VERSION="$(extract_first_semver "${dart_output}")" || die "The located Dart executable reported an invalid version."
+  if [[ ${sdk_family} == flutter ]]; then
+    flutter_output="$("${sdk_root}/bin/flutter" --version --machine 2>&1)" || die "The located Flutter executable failed to report its version: ${sdk_root}/bin/flutter"
+    RESOLVED_SDK_VERSION="$(extract_machine_value "${flutter_output}" frameworkVersion)" || die "The located Flutter executable reported an invalid framework version."
+    machine_dart_version="$(extract_machine_value "${flutter_output}" dartSdkVersion)" || die "The located Flutter executable reported an invalid bundled Dart version."
+    RESOLVED_DART_VERSION="$(extract_first_semver "${machine_dart_version}")" || die "The located Flutter executable reported an invalid bundled Dart version."
+  else
+    RESOLVED_SDK_VERSION="${RESOLVED_DART_VERSION}"
+  fi
+
+  require_minimum_dart_runtime "${RESOLVED_DART_VERSION}"
+  if [[ ${requested_version} != stable && ${requested_version} != "${RESOLVED_SDK_VERSION}" ]]; then
+    die "Located ${sdk_family} SDK ${RESOLVED_SDK_VERSION} does not match requested version ${requested_version}."
+  fi
+  sdk_installation_is_valid "${sdk_root}" "${sdk_family}" "${RESOLVED_SDK_VERSION}" "${RESOLVED_DART_VERSION}" || die "Located ${sdk_family} SDK at ${sdk_root} failed validation."
+  CURRENT_SDK_ROOT="${sdk_root}"
+  log_resolved_sdk "${sdk_family}"
+}
+
+lockfile_is_tracked() {
+  local project_dir="$1"
+
+  [[ -f ${project_dir}/pubspec.lock ]] || return 1
+  command -v git >/dev/null 2>&1 || return 1
+  git -C "${project_dir}" ls-files --error-unmatch pubspec.lock >/dev/null 2>&1
+}
+
+run_project_bootstrap() {
+  local bootstrap_strategy="$1"
+  local project_dir="$2"
+  local tool_path=""
+  local enforce_lockfile=false
+  local -a bootstrap_command=()
+
+  [[ ${bootstrap_strategy} != none ]] || return 0
+  if lockfile_is_tracked "${project_dir}"; then
+    enforce_lockfile=true
+  fi
+
+  case "${bootstrap_strategy}" in
+  dart)
+    bootstrap_command=("${CURRENT_SDK_ROOT}/bin/dart" pub get)
+    ;;
+  flutter)
+    bootstrap_command=("${CURRENT_SDK_ROOT}/bin/flutter" pub get)
+    ;;
+  melos)
+    tool_path="${PUB_CACHE}/bin/melos"
+    [[ -x ${tool_path} ]] || die "melos is unavailable at ${tool_path}; run 'merry-setup setup --bootstrap melos' first."
+    bootstrap_command=("${tool_path}" bootstrap)
+    ;;
+  very-good)
+    tool_path="${PUB_CACHE}/bin/very_good"
+    [[ -x ${tool_path} ]] || die "very_good is unavailable at ${tool_path}; run 'merry-setup setup --bootstrap very-good' first."
+    bootstrap_command=("${tool_path}" packages get --recursive)
+    enforce_lockfile=false
+    ;;
+  esac
+
+  if [[ ${enforce_lockfile} == true ]]; then
+    bootstrap_command+=(--enforce-lockfile)
+  fi
+
+  (cd "${project_dir}" && "${bootstrap_command[@]}") || die "Project bootstrap failed: strategy=${bootstrap_strategy} command=${bootstrap_command[*]}"
+  printf 'Project bootstrap completed: strategy=%s command=%s\n' "${bootstrap_strategy}" "${bootstrap_command[*]}"
+}
+
 main() {
   local command_name=""
   local sdk_family=""
@@ -1134,6 +1235,10 @@ main() {
     die "Option '--merry-version' conflicts with '--no-merry'."
   fi
 
+  if [[ ${bootstrap_strategy} == flutter && ${sdk_family} != flutter ]]; then
+    die "Option '--bootstrap flutter' requires '--sdk flutter'."
+  fi
+
   if [[ ${sdk_family} == dart && ${#precache_inputs[@]} -gt 0 ]]; then
     die "Option '--precache' is invalid when '--sdk dart' is selected."
   fi
@@ -1172,7 +1277,12 @@ main() {
   validate_host
 
   if [[ ${command_name} == bootstrap ]]; then
-    die "Command validation passed, but bootstrap-only execution is not implemented in this development snapshot."
+    locate_path_sdk "${sdk_family}" "${sdk_version}"
+    resolve_pub_cache "${sdk_family}"
+    apply_path_persistence "${persistence_adapter}"
+    run_project_bootstrap "${bootstrap_strategy}" "${resolved_project_dir}"
+    printf 'Merry bootstrap completed: sdk=%s version=%s bootstrap=%s persist=%s\n' "${sdk_family}" "${RESOLVED_SDK_VERSION}" "${bootstrap_strategy}" "${persistence_adapter}"
+    return 0
   fi
 
   resolve_and_install_sdk "${sdk_family}" "${sdk_version}"
@@ -1182,8 +1292,8 @@ main() {
   run_flutter_precache
   resolve_trunk_launcher "${resolved_project_dir}"
   apply_path_persistence "${persistence_adapter}"
-
-  die "Setup completed through PATH persistence. Project bootstrap is not implemented in this development snapshot."
+  run_project_bootstrap "${bootstrap_strategy}" "${resolved_project_dir}"
+  printf 'Merry setup completed: sdk=%s version=%s bootstrap=%s persist=%s\n' "${sdk_family}" "${RESOLVED_SDK_VERSION}" "${bootstrap_strategy}" "${persistence_adapter}"
 }
 
 main "$@"

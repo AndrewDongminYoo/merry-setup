@@ -80,7 +80,7 @@ assert_stderr_contains "Option '--precache' is invalid when '--sdk dart' is sele
 pass "Dart precache conflict"
 
 missing_project="${TEST_ROOT}/missing project"
-run_cli setup --sdk dart --bootstrap flutter --persist-path none --project-dir "${missing_project}"
+run_cli setup --sdk dart --bootstrap dart --persist-path none --project-dir "${missing_project}"
 assert_nonzero
 assert_stderr_contains "Project directory does not exist: ${missing_project}"
 pass "canonical project-directory preflight"
