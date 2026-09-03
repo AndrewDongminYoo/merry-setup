@@ -77,8 +77,11 @@ jobs:
           flutterfire --version
           firebase --version
 
+  # Requirement 20 asks this matrix for exact Dart 3.12.0 with Merry and Very Good CLI activation.
+  # It deliberately does not run 'bootstrap: very-good': Very Good CLI documents the Flutter SDK as
+  # a prerequisite, so that strategy cannot succeed in a Dart-only environment.
   dart-exact-very-good:
-    name: Dart 3.12.0, Merry, Very Good bootstrap
+    name: Dart 3.12.0, Merry, Very Good CLI activation
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -97,8 +100,10 @@ jobs:
         with:
           sdk: dart
           sdk-version: 3.12.0
-          bootstrap: very-good
+          bootstrap: dart
           project-dir: fixture
+          dart-packages: |
+            very_good_cli
 
       - name: Verify tools from a later step
         run: |
