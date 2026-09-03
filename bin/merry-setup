@@ -9,10 +9,17 @@ readonly MINIMUM_DART_RUNTIME=3.12.0
 readonly DART_RELEASE_BASE_URL=https://storage.googleapis.com/dart-archive/channels/stable/release
 readonly FLUTTER_RELEASES_URL=https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json
 readonly FLUTTER_RELEASE_BASE_URL=https://storage.googleapis.com/flutter_infra_release/releases
+readonly TRUNK_LAUNCHER_URL=https://trunk.io/releases/trunk
+readonly BASHRC_BLOCK_BEGIN='# >>> merry-setup managed block >>>'
+readonly BASHRC_BLOCK_END='# <<< merry-setup managed block <<<'
 
 ACTIVE_FAMILY_ROOT=""
 ACTIVE_METADATA_FILE=""
 ACTIVE_STAGE_DIR=""
+ACTIVE_TRUNK_STAGE=""
+ACTIVE_BASHRC_TEMP=""
+LOCAL_TOOL_BIN=""
+TRUNK_LAUNCHER=""
 RESOLVED_SDK_VERSION=""
 RESOLVED_DART_VERSION=""
 RESOLVED_DART_ARCH=""
@@ -80,6 +87,14 @@ cleanup_sdk_transients() {
 
   if [[ -n ${ACTIVE_STAGE_DIR} && -n ${ACTIVE_FAMILY_ROOT} && ${ACTIVE_STAGE_DIR} == "${ACTIVE_FAMILY_ROOT}/."*.staging.* ]]; then
     rm -rf -- "${ACTIVE_STAGE_DIR}"
+  fi
+
+  if [[ -n ${ACTIVE_TRUNK_STAGE} && -n ${LOCAL_TOOL_BIN} && ${ACTIVE_TRUNK_STAGE} == "${LOCAL_TOOL_BIN}/.trunk."* ]]; then
+    rm -f -- "${ACTIVE_TRUNK_STAGE}"
+  fi
+
+  if [[ -n ${ACTIVE_BASHRC_TEMP} && ${ACTIVE_BASHRC_TEMP} == *"/.bashrc.merry-setup."* ]]; then
+    rm -f -- "${ACTIVE_BASHRC_TEMP}"
   fi
 }
 
@@ -675,6 +690,136 @@ run_flutter_precache() {
   printf 'Flutter precache completed: %s\n' "${precache_command[*]:2}"
 }
 
+shell_single_quote() {
+  local value="$1"
+  local quote="'"
+
+  printf "'%s'" "${value//${quote}/${quote}\\${quote}${quote}}"
+}
+
+validate_trunk_path() {
+  local requested_path="$1"
+  local launcher_dir=""
+
+  TRUNK_LAUNCHER=""
+  [[ -n ${requested_path} ]] || return 0
+  [[ ! ${requested_path} =~ [[:cntrl:]] && -f ${requested_path} && -x ${requested_path} ]] || die "Option '--trunk-path' must point to an executable Trunk launcher; received '${requested_path}'."
+  launcher_dir="${requested_path%/*}"
+  [[ ${requested_path} == */* ]] || launcher_dir=.
+  [[ -n ${launcher_dir} ]] || launcher_dir=/
+  launcher_dir="$(cd "${launcher_dir}" && pwd -P)" || die "Option '--trunk-path' could not be resolved: '${requested_path}'."
+  TRUNK_LAUNCHER="${launcher_dir}/${requested_path##*/}"
+}
+
+validate_persistence_environment() {
+  local persistence_adapter="$1"
+
+  case "${persistence_adapter}" in
+  github)
+    [[ -n ${GITHUB_ENV:-} && -f ${GITHUB_ENV} && -w ${GITHUB_ENV} ]] || die "GITHUB_ENV must point to a writable file when '--persist-path github' is selected."
+    [[ -n ${GITHUB_PATH:-} && -f ${GITHUB_PATH} && -w ${GITHUB_PATH} ]] || die "GITHUB_PATH must point to a writable file when '--persist-path github' is selected."
+    ;;
+  bashrc)
+    [[ -n ${HOME:-} && -d ${HOME} ]] || die "HOME must point to a directory when '--persist-path bashrc' is selected."
+    ;;
+  esac
+}
+
+resolve_trunk_launcher() {
+  local project_dir="$1"
+  local candidate_path=""
+  local final_launcher="${LOCAL_TOOL_BIN}/trunk"
+
+  if [[ -z ${TRUNK_LAUNCHER} ]]; then
+    for candidate_path in "${project_dir}/.trunk/bin/trunk" "${project_dir}/tools/trunk" "${project_dir}/trunk" "${final_launcher}"; do
+      if [[ -f ${candidate_path} && -x ${candidate_path} ]]; then
+        TRUNK_LAUNCHER="${candidate_path}"
+        break
+      fi
+    done
+  fi
+
+  if [[ -z ${TRUNK_LAUNCHER} ]]; then
+    mkdir -p -- "${LOCAL_TOOL_BIN}"
+    ACTIVE_TRUNK_STAGE="$(mktemp "${LOCAL_TOOL_BIN}/.trunk.XXXXXX")"
+    download_file "${TRUNK_LAUNCHER_URL}" "${ACTIVE_TRUNK_STAGE}" "Trunk launcher"
+    chmod 0755 "${ACTIVE_TRUNK_STAGE}"
+    mv -f -- "${ACTIVE_TRUNK_STAGE}" "${final_launcher}" || die "Failed to install the Trunk launcher at ${final_launcher}."
+    ACTIVE_TRUNK_STAGE=""
+    TRUNK_LAUNCHER="${final_launcher}"
+  fi
+
+  printf 'Trunk launcher: %s\n' "${TRUNK_LAUNCHER}"
+  "${TRUNK_LAUNCHER}" version || die "Trunk launcher failed to report its version: ${TRUNK_LAUNCHER}"
+}
+
+write_bashrc_block() {
+  local sdk_bin="$1"
+  local pub_bin="$2"
+  local bashrc_file="${HOME}/.bashrc"
+  local bashrc_line=""
+  local begin_count=0
+  local end_count=0
+  local in_block=false
+
+  if [[ -e ${bashrc_file} ]]; then
+    [[ -f ${bashrc_file} ]] || die "${bashrc_file} is not a regular file."
+    while IFS= read -r bashrc_line || [[ -n ${bashrc_line} ]]; do
+      [[ ${bashrc_line} != "${BASHRC_BLOCK_BEGIN}" ]] || ((begin_count += 1))
+      [[ ${bashrc_line} != "${BASHRC_BLOCK_END}" ]] || ((end_count += 1))
+    done <"${bashrc_file}"
+    if [[ ${begin_count} -gt 1 || ${end_count} -gt 1 || ${begin_count} -ne ${end_count} ]]; then
+      die "${bashrc_file} contains an incomplete or duplicated merry-setup managed block; repair it before rerunning."
+    fi
+  fi
+
+  ACTIVE_BASHRC_TEMP="$(mktemp "${HOME}/.bashrc.merry-setup.XXXXXX")"
+  {
+    if [[ -f ${bashrc_file} ]]; then
+      while IFS= read -r bashrc_line || [[ -n ${bashrc_line} ]]; do
+        if [[ ${bashrc_line} == "${BASHRC_BLOCK_BEGIN}" ]]; then
+          in_block=true
+          continue
+        fi
+        if [[ ${bashrc_line} == "${BASHRC_BLOCK_END}" ]]; then
+          in_block=false
+          continue
+        fi
+        [[ ${in_block} == true ]] || printf '%s\n' "${bashrc_line}"
+      done <"${bashrc_file}"
+    fi
+    printf '%s\n' \
+      "${BASHRC_BLOCK_BEGIN}" \
+      "export PUB_CACHE=$(shell_single_quote "${PUB_CACHE}")" \
+      "export PATH=$(shell_single_quote "${sdk_bin}"):$(shell_single_quote "${pub_bin}"):$(shell_single_quote "${LOCAL_TOOL_BIN}"):\"\${PATH}\"" \
+      "${BASHRC_BLOCK_END}"
+  } >"${ACTIVE_BASHRC_TEMP}"
+  # ponytail: copy-through keeps a symlinked .bashrc pointing at its target; not atomic, rerun repairs it.
+  cat -- "${ACTIVE_BASHRC_TEMP}" >"${bashrc_file}" || die "Failed to update ${bashrc_file}."
+  rm -f -- "${ACTIVE_BASHRC_TEMP}"
+  ACTIVE_BASHRC_TEMP=""
+}
+
+apply_path_persistence() {
+  local persistence_adapter="$1"
+  local sdk_bin="${CURRENT_SDK_ROOT}/bin"
+  local pub_bin="${PUB_CACHE}/bin"
+
+  case "${persistence_adapter}" in
+  none)
+    ;;
+  github)
+    printf 'PUB_CACHE=%s\n' "${PUB_CACHE}" >>"${GITHUB_ENV}" || die "Failed to write PUB_CACHE to GITHUB_ENV."
+    printf '%s\n' "${LOCAL_TOOL_BIN}" "${pub_bin}" "${sdk_bin}" >>"${GITHUB_PATH}" || die "Failed to write PATH entries to GITHUB_PATH."
+    ;;
+  bashrc)
+    write_bashrc_block "${sdk_bin}" "${pub_bin}"
+    ;;
+  esac
+
+  printf 'Persisted PUB_CACHE and PATH: adapter=%s\n' "${persistence_adapter}"
+}
+
 is_valid_dart_package_name() {
   local package_name="$1"
 
@@ -749,7 +894,7 @@ resolve_pub_cache() {
   export PUB_CACHE
 
   mkdir -p -- "${PUB_CACHE}/bin"
-  PATH="${CURRENT_SDK_ROOT}/bin:${PUB_CACHE}/bin${NPM_GLOBAL_BIN:+:${NPM_GLOBAL_BIN}}${PATH:+:${PATH}}"
+  PATH="${CURRENT_SDK_ROOT}/bin:${PUB_CACHE}/bin:${LOCAL_TOOL_BIN}${NPM_GLOBAL_BIN:+:${NPM_GLOBAL_BIN}}${PATH:+:${PATH}}"
   export PATH
   printf 'Resolved PUB_CACHE: %s\n' "${PUB_CACHE}"
 }
@@ -1002,6 +1147,9 @@ main() {
   fi
   validate_absolute_path "MERRY_SETUP_HOME" "${managed_home}"
   export MERRY_SETUP_HOME="${managed_home}"
+  LOCAL_TOOL_BIN="${managed_home}/bin"
+  validate_trunk_path "${trunk_path}"
+  validate_persistence_environment "${persistence_adapter}"
 
   if [[ ${PUB_CACHE+x} == x ]]; then
     validate_absolute_path "PUB_CACHE" "${PUB_CACHE}"
@@ -1032,9 +1180,10 @@ main() {
   resolve_pub_cache "${sdk_family}"
   activate_global_packages
   run_flutter_precache
+  resolve_trunk_launcher "${resolved_project_dir}"
+  apply_path_persistence "${persistence_adapter}"
 
-  : "${trunk_path}" "${CURRENT_SDK_ROOT}"
-  die "SDK installation completed. Remaining setup steps are not implemented in this development snapshot."
+  die "Setup completed through PATH persistence. Project bootstrap is not implemented in this development snapshot."
 }
 
 main "$@"

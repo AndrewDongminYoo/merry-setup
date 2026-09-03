@@ -74,6 +74,7 @@ trap cleanup_test_env EXIT
 readonly FIXTURE_DIR="${TOOLS_TEST_DIR}/fixtures"
 
 printf 'name: fixture\n' >"${TEST_ROOT}/project/pubspec.yaml"
+write_trunk_launcher_stub "${TEST_ROOT}/launchers/trunk"
 
 create_host_stub() {
   local stub_path="${TEST_ROOT}/commands/uname"
@@ -243,6 +244,7 @@ run_setup() {
     --bootstrap "${bootstrap_strategy}" \
     --persist-path none \
     --project-dir "${TEST_ROOT}/project" \
+    --trunk-path "${TEST_ROOT}/launchers/trunk" \
     "$@"
 }
 
@@ -535,7 +537,7 @@ case_flutterfire_version_mismatch() {
   run_setup flutter 3.44.0 none --bundle flutterfire --firebase-tools-version 14.2.1 --no-merry
   assert_nonzero
   assert_stderr_contains 'Installed Firebase Tools version 14.2.0 does not match requested version 14.2.1.'
-  assert_stderr_excludes 'Remaining setup steps are not implemented'
+  assert_stderr_excludes 'Project bootstrap is not implemented'
   pass "Firebase Tools exact-version mismatch fails after installation"
 }
 
@@ -684,7 +686,7 @@ case_failed_npm_install() {
   assert_nonzero
   assert_stderr_contains 'Failed to install Firebase Tools through npm.'
   assert_log_contains 'CALL npm|install|--global|firebase-tools'
-  assert_stderr_excludes 'Remaining setup steps are not implemented'
+  assert_stderr_excludes 'Project bootstrap is not implemented'
   pass "failed npm install suppresses remaining setup success"
 }
 
@@ -699,7 +701,7 @@ case_failed_activation_preserves_cache() {
   assert_stderr_contains "Failed to activate Dart package 'broken'."
   assert_path_exists "${expected_cache}/sentinel"
   assert_stdout_contains 'Resolved SDK:'
-  assert_stderr_excludes 'Remaining setup steps are not implemented'
+  assert_stderr_excludes 'Project bootstrap is not implemented'
   pass "failed activation preserves the resolved pub cache"
 }
 

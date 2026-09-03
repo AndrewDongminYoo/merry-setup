@@ -186,7 +186,7 @@ run_setup() {
   local sdk_family="$1"
   local sdk_version="$2"
 
-  run_cli setup --sdk "${sdk_family}" --sdk-version "${sdk_version}" --bootstrap none --persist-path none --no-merry
+  run_cli setup --sdk "${sdk_family}" --sdk-version "${sdk_version}" --bootstrap none --persist-path none --no-merry --trunk-path "${TEST_ROOT}/launchers/trunk"
 }
 
 assert_archive_download_count() {
@@ -216,6 +216,7 @@ assert_stdout_contains() {
 }
 
 create_sdk_stubs
+write_trunk_launcher_stub "${TEST_ROOT}/launchers/trunk"
 
 reset_case
 export TEST_UNAME_S=Darwin
@@ -258,7 +259,7 @@ pass "truncated Dart metadata fails closed"
 reset_case
 run_setup dart stable
 assert_nonzero
-assert_stderr_contains "Remaining setup steps are not implemented"
+assert_stderr_contains "Project bootstrap is not implemented"
 assert_path_exists "${MERRY_SETUP_HOME}/sdks/dart/3.12.0/bin/dart"
 assert_path_absent "${MERRY_SETUP_HOME}/sdks/dart/stable"
 [[ ! -L ${MERRY_SETUP_HOME}/sdks/dart/stable ]] || fail "Dart stable alias is a dangling symlink"
@@ -273,7 +274,7 @@ pass "Dart stable resolves before exact final path derivation"
 reset_case
 run_setup dart 3.12.0
 assert_nonzero
-assert_stderr_contains "Remaining setup steps are not implemented"
+assert_stderr_contains "Project bootstrap is not implemented"
 assert_path_exists "${MERRY_SETUP_HOME}/sdks/dart/3.12.0/bin/dart"
 if grep -Fq '/release/latest/VERSION' "${TEST_COMMAND_LOG}"; then fail "exact Dart version fetched stable metadata"; fi
 pass "exact Dart version skips stable metadata"
@@ -354,7 +355,7 @@ run_setup dart 3.12.0
 : >"${TEST_COMMAND_LOG}"
 run_setup dart 3.12.0
 assert_nonzero
-assert_stderr_contains "Remaining setup steps are not implemented"
+assert_stderr_contains "Project bootstrap is not implemented"
 assert_command_count 0 curl
 assert_command_count 0 unzip
 pass "valid exact-version Dart SDK is reused"
@@ -411,7 +412,7 @@ export RACE_VERSION=3.12.0
 export RACE_DART_VERSION=3.12.0
 run_setup dart 3.12.0
 assert_nonzero
-assert_stderr_contains "Remaining setup steps are not implemented"
+assert_stderr_contains "Project bootstrap is not implemented"
 assert_path_exists "${MERRY_SETUP_HOME}/sdks/dart/3.12.0/bin/dart"
 assert_no_staging_paths "${MERRY_SETUP_HOME}/sdks/dart"
 pass "publication loser validates and reuses race winner"
@@ -495,7 +496,7 @@ reset_case
 export ARCHIVE_ACTUAL_SHA256="${FLUTTER_ARCHIVE_SHA256}"
 run_setup flutter stable
 assert_nonzero
-assert_stderr_contains "Remaining setup steps are not implemented"
+assert_stderr_contains "Project bootstrap is not implemented"
 assert_path_exists "${MERRY_SETUP_HOME}/sdks/flutter/3.44.0/bin/flutter"
 assert_path_exists "${MERRY_SETUP_HOME}/sdks/flutter/3.44.0/bin/dart"
 assert_path_absent "${MERRY_SETUP_HOME}/sdks/flutter/stable"
@@ -510,7 +511,7 @@ reset_case
 export ARCHIVE_ACTUAL_SHA256="${FLUTTER_ARCHIVE_SHA256}"
 run_setup flutter 3.44.0
 assert_nonzero
-assert_stderr_contains "Remaining setup steps are not implemented"
+assert_stderr_contains "Project bootstrap is not implemented"
 assert_path_exists "${MERRY_SETUP_HOME}/sdks/flutter/3.44.0/bin/flutter"
 pass "exact Flutter release selects one stable manifest record"
 
