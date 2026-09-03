@@ -22,7 +22,7 @@ The root `action.yml` is a thin GitHub composite action over that same implement
 
 - Linux x64. Other operating systems and architectures fail before any download.
 - Bash 4 or newer, `curl`, `tar`, `unzip`, `sha256sum`, and GNU `mv`.
-- `git` on `PATH` when a tracked `pubspec.lock` should enable `--enforce-lockfile`; without it the lockfile is treated as untracked.
+- `git` on `PATH` whenever the project root holds a `pubspec.lock` and the bootstrap strategy is `dart`, `flutter`, or `melos`. Those strategies decide `--enforce-lockfile` from the lockfile's tracked state, which is unknowable without git, so setup fails rather than guessing. `none` and `very-good` never inspect it.
 - `npm` on `PATH` only when the `flutterfire` bundle is requested.
 - The effective Dart runtime must be at least 3.12.0, whether it is a standalone Dart SDK or the Dart bundled with Flutter.
 

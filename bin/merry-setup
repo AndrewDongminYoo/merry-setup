@@ -1083,7 +1083,8 @@ lockfile_is_tracked() {
   local git_status=0
 
   [[ -f ${project_dir}/pubspec.lock ]] || return 1
-  command -v git >/dev/null 2>&1 || return 1
+  # Every other prerequisite in this script fails closed, and tracked state is unknowable without git.
+  command -v git >/dev/null 2>&1 || die "git is required to decide the lockfile policy for ${project_dir}/pubspec.lock; install git, or select '--bootstrap none' and run the project's dependency command yourself."
 
   # LC_ALL=C pins the message this function has to recognize; the status alone cannot separate the two 128 cases.
   git_output="$(LC_ALL=C git -C "${project_dir}" ls-files --error-unmatch -- pubspec.lock 2>&1)" && git_status=0 || git_status=$?

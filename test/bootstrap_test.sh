@@ -173,6 +173,45 @@ assert_log_contains 'CALL very_good|packages get --recursive'
 rm -f "${TEST_ROOT}/commands/git"
 pass "very-good bootstrap ignores an unreadable git checkout because it never reads the lockfile"
 
+# A PATH without git, still carrying the few external tools the bootstrap flow needs.
+mkdir -p "${TEST_ROOT}/nogit"
+for nogit_tool in readlink mkdir rm cat cp mv find grep sed ls chmod; do
+  for nogit_dir in /usr/bin /bin; do
+    [[ ! -x ${nogit_dir}/${nogit_tool} ]] || ln -sf "${nogit_dir}/${nogit_tool}" "${TEST_ROOT}/nogit/${nogit_tool}"
+  done
+done
+[[ ! -x ${TEST_ROOT}/nogit/git ]] || fail "the nogit PATH still exposes git"
+
+run_bootstrap_without_git() {
+  local sdk_bin="$1"
+  shift
+
+  PATH="${sdk_bin}:${TEST_ROOT}/commands:${TEST_ROOT}/nogit:${BASH%/*}" run_cli bootstrap --persist-path none --project-dir "${PROJECT_DIR}" "$@"
+}
+
+reset_case
+track_lockfile
+run_bootstrap_without_git "${DART_BIN}" --sdk dart --bootstrap dart
+assert_nonzero
+assert_stderr_contains "git is required to decide the lockfile policy"
+assert_log_excludes 'CALL dart|pub get'
+pass "a tracked lockfile without git aborts instead of guessing the policy"
+
+reset_case
+mkdir -p "${DART_CACHE}/bin"
+cp "${TOOL_SHIM_TEMPLATE}" "${DART_CACHE}/bin/very_good"
+run_bootstrap_without_git "${DART_BIN}" --sdk dart --bootstrap very-good
+assert_status 0
+assert_log_contains 'CALL very_good|packages get --recursive'
+pass "very-good bootstrap runs without git because it never inspects the lockfile"
+
+reset_case
+run_bootstrap_without_git "${DART_BIN}" --sdk dart --bootstrap dart
+assert_status 0
+assert_log_contains 'CALL dart|pub get'
+assert_log_excludes '--enforce-lockfile'
+pass "an absent lockfile needs no git at all"
+
 reset_case
 run_bootstrap "${DART_BIN}" --sdk dart --bootstrap flutter
 assert_nonzero
