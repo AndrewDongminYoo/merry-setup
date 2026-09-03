@@ -296,7 +296,8 @@ Expected: all black-box tests pass and no test reaches the network or the operat
 - [x] Resolve every third-party workflow Action tag to a current verified full commit SHA before inserting it. Reject any value that is not exactly 40 hexadecimal characters.
 
 ```bash
-git ls-remote https://github.com/actions/checkout.git 'refs/tags/v4^{}' refs/tags/v4
+git ls-remote https://github.com/actions/checkout.git 'refs/tags/v6^{}' refs/tags/v6
+git ls-remote https://github.com/trunk-io/trunk-action.git 'refs/tags/v2.0.0^{}' refs/tags/v2.0.0
 ```
 
 Expected: select the peeled tag commit when present and record the verification date in a YAML comment without promising that it remains upstream-latest.
