@@ -21,6 +21,9 @@ RESOLVED_ARCHIVE_SHA256=""
 CURRENT_SDK_ROOT=""
 HOST_ARCHITECTURE=""
 FLUTTERFIRE_BUNDLE_ENABLED=false
+PRECACHE_ANDROID=false
+PRECACHE_WEB=false
+PRECACHE_LINUX=false
 NPM_EXECUTABLE=""
 NPM_GLOBAL_BIN=""
 declare -a ACTIVATION_PACKAGE_NAMES=()
@@ -616,6 +619,62 @@ validate_firebase_tools() {
   fi
 }
 
+validate_precache_targets() {
+  local precache_input=""
+  local precache_target=""
+  local -a precache_targets=()
+
+  PRECACHE_ANDROID=false
+  PRECACHE_WEB=false
+  PRECACHE_LINUX=false
+
+  for precache_input in "$@"; do
+    [[ -n ${precache_input} && ! ${precache_input} =~ [[:cntrl:]] ]] || die "Option '--precache' requires a nonempty target list."
+    if [[ ${precache_input} == ,* || ${precache_input} == *, || ${precache_input} == *,,* ]]; then
+      die "Option '--precache' contains an empty target in '${precache_input}'."
+    fi
+
+    IFS=, read -r -a precache_targets <<<"${precache_input}"
+    for precache_target in "${precache_targets[@]}"; do
+      case "${precache_target}" in
+      android)
+        PRECACHE_ANDROID=true
+        ;;
+      web)
+        PRECACHE_WEB=true
+        ;;
+      linux)
+        PRECACHE_LINUX=true
+        ;;
+      *)
+        die "Option '--precache' must contain only android, web, or linux targets; received '${precache_target}'."
+        ;;
+      esac
+    done
+  done
+}
+
+run_flutter_precache() {
+  local -a precache_command=("${CURRENT_SDK_ROOT}/bin/flutter" precache)
+
+  if [[ ${PRECACHE_ANDROID} == false && ${PRECACHE_WEB} == false && ${PRECACHE_LINUX} == false ]]; then
+    return 0
+  fi
+
+  if [[ ${PRECACHE_ANDROID} == true ]]; then
+    precache_command+=(--android)
+  fi
+  if [[ ${PRECACHE_WEB} == true ]]; then
+    precache_command+=(--web)
+  fi
+  if [[ ${PRECACHE_LINUX} == true ]]; then
+    precache_command+=(--linux)
+  fi
+
+  "${precache_command[@]}" || die "Flutter precache failed: ${precache_command[*]:2}"
+  printf 'Flutter precache completed: %s\n' "${precache_command[*]:2}"
+}
+
 is_valid_dart_package_name() {
   local package_name="$1"
 
@@ -933,6 +992,7 @@ main() {
   if [[ ${sdk_family} == dart && ${#precache_inputs[@]} -gt 0 ]]; then
     die "Option '--precache' is invalid when '--sdk dart' is selected."
   fi
+  validate_precache_targets "${precache_inputs[@]}"
 
   if [[ ${MERRY_SETUP_HOME+x} == x ]]; then
     managed_home="${MERRY_SETUP_HOME}"
@@ -971,6 +1031,7 @@ main() {
   install_flutterfire_bundle "${firebase_tools_version}"
   resolve_pub_cache "${sdk_family}"
   activate_global_packages
+  run_flutter_precache
 
   : "${trunk_path}" "${CURRENT_SDK_ROOT}"
   die "SDK installation completed. Remaining setup steps are not implemented in this development snapshot."
