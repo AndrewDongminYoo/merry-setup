@@ -174,19 +174,29 @@ rm -f "${TEST_ROOT}/commands/git"
 pass "very-good bootstrap ignores an unreadable git checkout because it never reads the lockfile"
 
 # A PATH without git, still carrying the few external tools the bootstrap flow needs.
+# Every entry is a symlink into one directory, because adding a real bin directory
+# (the running Bash's own, for instance) reintroduces git wherever the two share a prefix.
 mkdir -p "${TEST_ROOT}/nogit"
-for nogit_tool in readlink mkdir rm cat cp mv find grep sed ls chmod; do
-  for nogit_dir in /usr/bin /bin; do
-    [[ ! -x ${nogit_dir}/${nogit_tool} ]] || ln -sf "${nogit_dir}/${nogit_tool}" "${TEST_ROOT}/nogit/${nogit_tool}"
-  done
+for nogit_tool in readlink mkdir rm cat cp mv find grep sed ls chmod env; do
+  if nogit_source="$(command -v "${nogit_tool}")"; then
+    ln -sf "${nogit_source}" "${TEST_ROOT}/nogit/${nogit_tool}"
+  fi
 done
-[[ ! -x ${TEST_ROOT}/nogit/git ]] || fail "the nogit PATH still exposes git"
+ln -sf "${BASH}" "${TEST_ROOT}/nogit/bash"
+
+readonly NOGIT_PATH="${TEST_ROOT}/commands:${TEST_ROOT}/nogit"
+if (
+  PATH="${NOGIT_PATH}"
+  command -v git >/dev/null 2>&1
+); then
+  fail "the no-git PATH still exposes git, so the cases below would be vacuous"
+fi
 
 run_bootstrap_without_git() {
   local sdk_bin="$1"
   shift
 
-  PATH="${sdk_bin}:${TEST_ROOT}/commands:${TEST_ROOT}/nogit:${BASH%/*}" run_cli bootstrap --persist-path none --project-dir "${PROJECT_DIR}" "$@"
+  PATH="${sdk_bin}:${NOGIT_PATH}" run_cli bootstrap --persist-path none --project-dir "${PROJECT_DIR}" "$@"
 }
 
 reset_case
