@@ -182,7 +182,7 @@ download_file() {
   local description="$3"
 
   command -v curl >/dev/null 2>&1 || die "curl is required to download ${description}."
-  if ! curl --fail --silent --show-error --location --output "${destination_file}" "${source_url}"; then
+  if ! curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "${destination_file}" "${source_url}"; then
     die "Failed to download ${description}: ${source_url}"
   fi
   [[ -s ${destination_file} ]] || die "Downloaded ${description} is empty: ${source_url}"
@@ -760,9 +760,13 @@ resolve_trunk_launcher() {
     ACTIVE_TRUNK_STAGE="$(mktemp "${LOCAL_TOOL_BIN}/.trunk.XXXXXX")"
     download_file "${TRUNK_LAUNCHER_URL}" "${ACTIVE_TRUNK_STAGE}" "Trunk launcher"
     chmod 0755 "${ACTIVE_TRUNK_STAGE}"
+    # Validate the staged download before publishing it, so a truncated file or an HTTP error page never becomes the reused launcher.
+    "${ACTIVE_TRUNK_STAGE}" version || die "Downloaded Trunk launcher failed to report its version; it was not installed."
     mv -f -- "${ACTIVE_TRUNK_STAGE}" "${final_launcher}" || die "Failed to install the Trunk launcher at ${final_launcher}."
     ACTIVE_TRUNK_STAGE=""
     TRUNK_LAUNCHER="${final_launcher}"
+    printf 'Trunk launcher: %s\n' "${TRUNK_LAUNCHER}"
+    return 0
   fi
 
   printf 'Trunk launcher: %s\n' "${TRUNK_LAUNCHER}"
@@ -777,6 +781,12 @@ write_bashrc_block() {
   local block_count=0
   local in_block=false
   local malformed_message="${bashrc_file} contains an incomplete, duplicated, or misordered merry-setup managed block; repair it before rerunning."
+
+  if [[ -L ${bashrc_file} ]]; then
+    # Write through a symlinked .bashrc (a dotfiles checkout, for example) to its target so the link survives.
+    command -v readlink >/dev/null 2>&1 || die "${bashrc_file} is a symbolic link and readlink is unavailable to resolve it."
+    bashrc_file="$(readlink -f "${bashrc_file}")" || die "Failed to resolve the symbolic link ${HOME}/.bashrc."
+  fi
 
   if [[ -e ${bashrc_file} ]]; then
     [[ -f ${bashrc_file} ]] || die "${bashrc_file} is not a regular file."
@@ -793,7 +803,10 @@ write_bashrc_block() {
     [[ ${in_block} == false ]] || die "${malformed_message}"
   fi
 
-  ACTIVE_BASHRC_TEMP="$(mktemp "${HOME}/.bashrc.merry-setup.XXXXXX")"
+  ACTIVE_BASHRC_TEMP="$(mktemp "${bashrc_file%/*}/.bashrc.merry-setup.XXXXXX")"
+  if [[ -f ${bashrc_file} ]]; then
+    cp -p -- "${bashrc_file}" "${ACTIVE_BASHRC_TEMP}" || die "Failed to stage ${bashrc_file} for rewriting."
+  fi
   {
     if [[ -f ${bashrc_file} ]]; then
       while IFS= read -r bashrc_line || [[ -n ${bashrc_line} ]]; do
@@ -814,9 +827,8 @@ write_bashrc_block() {
       "export PATH=$(shell_single_quote "${sdk_bin}"):$(shell_single_quote "${pub_bin}"):$(shell_single_quote "${LOCAL_TOOL_BIN}"):\"\${PATH}\"" \
       "${BASHRC_BLOCK_END}"
   } >"${ACTIVE_BASHRC_TEMP}"
-  # ponytail: copy-through keeps a symlinked .bashrc pointing at its target; not atomic, rerun repairs it.
-  cat -- "${ACTIVE_BASHRC_TEMP}" >"${bashrc_file}" || die "Failed to update ${bashrc_file}."
-  rm -f -- "${ACTIVE_BASHRC_TEMP}"
+  # The staged copy carries the original mode, and the rename publishes the complete file in one step.
+  mv -f -- "${ACTIVE_BASHRC_TEMP}" "${bashrc_file}" || die "Failed to update ${bashrc_file}."
   ACTIVE_BASHRC_TEMP=""
 }
 

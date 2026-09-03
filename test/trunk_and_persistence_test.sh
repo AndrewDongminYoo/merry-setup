@@ -121,6 +121,21 @@ assert_stderr_contains "Trunk launcher failed to report its version"
 assert_stdout_excludes 'setup completed'
 pass "launcher version failure suppresses success"
 
+reset_case
+export TRUNK_VERSION_STATUS=3
+run_setup flutter 3.44.0 none
+assert_nonzero
+assert_stderr_contains "Downloaded Trunk launcher failed to report its version"
+assert_trunk_download_count 1
+assert_path_absent "${MERRY_SETUP_HOME}/bin/trunk"
+[[ -z "$(find "${MERRY_SETUP_HOME}/bin" -name '.trunk.*' -print 2>/dev/null)" ]] || fail "staged launcher was left behind"
+unset TRUNK_VERSION_STATUS
+run_setup flutter 3.44.0 none
+assert_status 0
+assert_trunk_download_count 2
+assert_path_exists "${MERRY_SETUP_HOME}/bin/trunk"
+pass "an unusable downloaded launcher is never installed and the next run downloads again"
+
 # --- Persistence adapters ---
 
 reset_case
@@ -187,6 +202,20 @@ printf '%s\n' "${quoted_home}/pub-cache/dart/3.12.0" "${quoted_home}/sdks/dart/3
 printf '%s\n' "${resolved_env}" >"${TEST_ROOT}/actual-resolved"
 assert_file_equals "${TEST_ROOT}/expected-resolved" "${TEST_ROOT}/actual-resolved"
 pass "bashrc adapter quotes paths containing spaces and single quotes"
+
+reset_case
+mkdir -p "${HOME}/dotfiles"
+printf '# dotfiles line\n' >"${HOME}/dotfiles/bashrc"
+chmod 0600 "${HOME}/dotfiles/bashrc"
+ln -s "${HOME}/dotfiles/bashrc" "${HOME}/.bashrc"
+run_setup dart 3.12.0 bashrc --trunk-path "${EXPLICIT_LAUNCHER}"
+assert_status 0
+[[ -L ${HOME}/.bashrc ]] || fail ".bashrc symlink was replaced by a regular file"
+assert_marker_count 1 '# dotfiles line'
+assert_marker_count 1 '# >>> merry-setup managed block >>>'
+[[ -z "$(find "${HOME}/dotfiles" -name '.bashrc.merry-setup.*' -print)" ]] || fail "staged .bashrc copy was left behind"
+[[ -n "$(find "${HOME}/dotfiles/bashrc" -perm 600 -print)" ]] || fail "target mode changed from 0600"
+pass "bashrc adapter writes through a symlink and keeps the target's mode"
 
 reset_case
 printf '# >>> merry-setup managed block >>>\nexport BROKEN=1\n' >"${HOME}/.bashrc"

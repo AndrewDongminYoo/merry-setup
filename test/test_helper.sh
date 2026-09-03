@@ -165,11 +165,12 @@ create_metadata_stub() {
     'request_url=""' \
     'while (($# > 0)); do' \
     '  case "$1" in' \
-    '  --output) output_file="$2"; shift 2 ;;' \
+    '  --output | --proto | --proto-redir) [[ $1 != --output ]] || output_file="$2"; shift 2 ;;' \
     '  --fail | --silent | --show-error | --location) shift ;;' \
     '  *) request_url="$1"; shift ;;' \
     '  esac' \
     'done' \
+    '[[ ${request_url} == https://* ]] || exit 2' \
     'if [[ -n ${CURL_FAIL_PATTERN:-} && ${request_url} == *"${CURL_FAIL_PATTERN}"* ]]; then exit 22; fi' \
     'case "${request_url}" in' \
     '*/VERSION) source_file="${DART_VERSION_FIXTURE}" ;;' \
