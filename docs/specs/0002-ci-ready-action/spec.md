@@ -50,11 +50,11 @@ Both changes stay inside the existing contract shape: no new mutable state, no r
 
 6. The composite Action must expose one optional `cache` input accepting `true` or `false`, defaulting to `false`, so existing consumers see no change until they opt in.
 7. When `cache` is `true`, the Action must restore and save the SDK store at `${MERRY_SETUP_HOME}/sdks/<family>/<version>` and the managed pub cache at `${MERRY_SETUP_HOME}/pub-cache/<family>/<version>`.
-8. The cache key must contain the SDK family, the exact resolved SDK version, the runner operating system and architecture, and a digest of the activation plan, because those are the inputs that determine the stored contents.
-9. A `sdk-version` of `stable` resolves to an exact version only after release metadata is read, so the key must be computed after resolution rather than from the requested value. An implementation that keys on `stable` must be rejected, because it would serve a stale SDK indefinitely.
-10. A cache hit must produce the same reported state as a cold run: the same resolved SDK log line, the same activated package versions, and the same persisted paths.
-11. A corrupt or partial restore must not be reused. The existing `sdk_installation_is_valid` check must run against a restored tree, and a tree that fails it must be discarded and reinstalled rather than repaired.
-12. Caching must remain absent from the portable CLI. The CLI's contract is unchanged, and the Action owns the cache steps, so a Codex Cloud wrapper gains nothing to configure and nothing to break.
+8. The cache key must contain the SDK family, the exact resolved SDK version, the runner operating system and architecture, and a digest of the activation plan as given, package names with their constraints, because those are the inputs that determine the stored contents. The key is a lookup key, not a determinism guarantee: a package with an open constraint already resolves differently on two cold runs on different days, and the cache neither removes nor adds that variance, because requirement 10 makes activation run on every hit.
+9. A `sdk-version` of `stable` resolves to an exact version only after release metadata is read, so the key must be computed after resolution rather than from the requested value. `action.yml` invokes the CLI once, and `resolve_and_install_sdk` installs in the same call that resolves, so the exact version is not available to the Action before the download today. The CLI must therefore gain a `resolve` command that reads release metadata, prints the exact version for the requested family and version, and performs no download, no extraction, no mutation of `MERRY_SETUP_HOME` and no persistence. The Action must compute the key from that command's output before any restore step and must not carry a resolver of its own. An implementation that keys on `stable` must be rejected, because it would serve a stale SDK indefinitely.
+10. A cache hit must produce the same reported state as a cold run at the same moment: the same resolved SDK log line, the same activated package versions, and the same persisted paths. The CLI is cache-unaware, so `dart pub global activate` must still run for every package on a hit, and a package with an open constraint therefore resolves fresh on every run; the restored pub cache saves the download, and never decides which version is active. A restored `global_packages` record must not be trusted as an activation.
+11. A restored tree must pass through the same acceptance path as any pre-existing installation. The Action restores into the final SDK path, so a valid restored tree is reused through the initial release's same-version reuse rule, and a corrupt or partial one must cause the deterministic failure that requirement 30 of the initial release already fixes, without automatic deletion, repair or reinstallation. Requirement 30 is not amended. The guard against a poisoned entry sits at save time instead: the Action must save an entry only after the setup step has succeeded, so a tree the CLI rejected is never written under its key, and the documented remedy for an entry corrupted after a successful save is deleting it from the repository's cache rather than a self-healing run.
+12. Caching must remain absent from the portable CLI: no save, no restore, no key computation and no cache-aware branch may exist in `bin/merry-setup`. The `resolve` command of requirement 9 is a read-only query that reports what `setup` would select and is usable outside CI, so it is not a cache feature. The Action owns every cache step, so a Codex Cloud wrapper gains nothing to configure and nothing to break.
 13. Third-party cache actions must be pinned to a full commit SHA, as `AGENTS.md` already requires for every Action in a committed workflow.
 
 ## Technical Decisions
@@ -63,15 +63,18 @@ Both changes stay inside the existing contract shape: no new mutable state, no r
 2. Caching is an Action input rather than a CLI option, because the two environments differ in exactly this respect: a container is created once and a runner is created per job. Putting it in the CLI would ask every Codex Cloud wrapper to carry a setting that is meaningless there. [operator, 2026-09-03]
 3. The cache key is computed after `stable` resolution rather than from the requested version, for the same reason the initial release resolves before deriving the store path: a movable input must never name a fixed artifact. [derived from requirement 28]
 4. The default is `false` rather than `true`, so adopting this release cannot change the behaviour of the fifteen repositories that merged the v1 wrapper today.
+5. Resolution is exposed as a CLI command rather than duplicated in the Action, because `AGENTS.md` keeps the Action a thin composite over the Bash behaviour, and a second resolver in YAML would be a second copy of the metadata parser to drift. [review finding, PR #6]
+6. A corrupt restore fails rather than reinstalls, because requirement 30 exists to keep `merry-setup` from deleting a final path it did not create in this run, and a hit that quietly deleted and reinstalled would give a hit and a cold run different behaviour, against requirement 10. Saving only on success is the cheaper guard: restoring into a staging area would need the validator outside the CLI, which requirement 12 forbids. [review finding, PR #6]
 
 ## Testing Strategy
 
 1. Persistence tests must cover a bundle-enabled run whose `$GITHUB_PATH` gains the npm bin directory in the required order, and a bundle-free run whose persisted set is unchanged from the initial release.
 2. A bundle-free run must be asserted to make no npm call at all, so requirement 2 is verified by absence rather than by inspection of the output.
 3. Cache-key tests must show that two runs differing only in resolved SDK version, activation plan, or runner architecture produce different keys, and that `stable` and the version it resolves to produce the same key.
-4. A restored tree that fails `sdk_installation_is_valid` must be shown to trigger a reinstall, using a fixture whose restored tree is deliberately incomplete.
+4. A restored tree that fails `sdk_installation_is_valid` must be shown to fail deterministically with the initial release's message, not to be repaired or reinstalled, using a fixture whose restored tree is deliberately incomplete, and the workflow must be shown not to save an entry after a failed setup step.
 5. Every cache assertion must be demonstrated to fail before it is trusted, matching the initial release's testing strategy.
-6. The integration workflow must gain a job that runs twice on the same key and asserts the second run reports the same resolved SDK and activated versions as the first while skipping the archive download.
+6. The integration workflow must gain two jobs on the same key: a save job that runs the Action cold, and a restore job that depends on it and starts on a fresh runner, because the cache is saved in the cache action's post step and a second invocation inside the save job would find the first invocation's tree still on disk. The restore job must assert the same resolved SDK and activated versions as the save job while skipping the archive download.
+7. The `resolve` command must be shown to leave `MERRY_SETUP_HOME` untouched and to make no request beyond release metadata, using the recording stubs the SDK test already builds, and its output for `stable` must equal the version `setup` logs in the same stubbed environment.
 
 ## Out of Scope
 
@@ -84,7 +87,6 @@ Both changes stay inside the existing contract shape: no new mutable state, no r
 ## Open Questions
 
 1. Should a cache hit still verify the archive checksum? The stored tree is already extracted, so there is no archive to check, and requirement 11 substitutes structural validation. Confirm that substitution is acceptable before implementation. `[UNCERTAIN]`
-2. Should `bashrc` persistence gain the npm directory too, or only `github`? Requirement 1 currently says both, on the grounds that a Codex Cloud shell has the same need, but no consumer has reported the gap there. `[UNCERTAIN]`
 
 ## Follow-Ups
 
