@@ -82,6 +82,21 @@ assert_log_contains 'CALL dart|pub get --enforce-lockfile'
 pass "a tracked lockfile enables --enforce-lockfile"
 
 reset_case
+track_lockfile
+# shellcheck disable=SC2016 # The generated stub expands its runtime environment.
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "fatal: detected dubious ownership in repository at %s\n" "${PWD}" >&2' \
+  'exit 128' >"${TEST_ROOT}/commands/git"
+chmod +x "${TEST_ROOT}/commands/git"
+run_bootstrap "${DART_BIN}" --sdk dart --bootstrap dart
+assert_nonzero
+assert_stderr_contains "dubious ownership"
+assert_log_excludes 'CALL dart|pub get'
+rm -f "${TEST_ROOT}/commands/git"
+pass "an unreadable git checkout aborts instead of silently dropping --enforce-lockfile"
+
+reset_case
 run_bootstrap "${FLUTTER_BIN}" --sdk flutter --bootstrap flutter
 assert_status 0
 assert_log_contains 'CALL flutter|pub get'

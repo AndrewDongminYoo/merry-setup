@@ -1079,10 +1079,29 @@ locate_path_sdk() {
 
 lockfile_is_tracked() {
   local project_dir="$1"
+  local git_output=""
+  local git_status=0
 
   [[ -f ${project_dir}/pubspec.lock ]] || return 1
   command -v git >/dev/null 2>&1 || return 1
-  git -C "${project_dir}" ls-files --error-unmatch pubspec.lock >/dev/null 2>&1
+
+  # LC_ALL=C pins the message this function has to recognize; the status alone cannot separate the two 128 cases.
+  git_output="$(LC_ALL=C git -C "${project_dir}" ls-files --error-unmatch -- pubspec.lock 2>&1)" && git_status=0 || git_status=$?
+
+  case "${git_status}" in
+  0)
+    return 0
+    ;;
+  1)
+    # Documented contract: '--error-unmatch' returns 1 when the path is absent from the index.
+    return 1
+    ;;
+  esac
+
+  # Git located no repository, so the project is simply not version controlled.
+  [[ ${git_output} == *'not a git repository'* ]] && return 1
+
+  die "Failed to determine whether pubspec.lock is tracked in ${project_dir}; refusing to guess the lockfile policy: ${git_output}"
 }
 
 run_project_bootstrap() {
