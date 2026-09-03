@@ -1108,35 +1108,35 @@ run_project_bootstrap() {
   local bootstrap_strategy="$1"
   local project_dir="$2"
   local tool_path=""
-  local enforce_lockfile=false
+  local supports_lockfile=false
   local -a bootstrap_command=()
 
   [[ ${bootstrap_strategy} != none ]] || return 0
-  if lockfile_is_tracked "${project_dir}"; then
-    enforce_lockfile=true
-  fi
 
   case "${bootstrap_strategy}" in
   dart)
     bootstrap_command=("${CURRENT_SDK_ROOT}/bin/dart" pub get)
+    supports_lockfile=true
     ;;
   flutter)
     bootstrap_command=("${CURRENT_SDK_ROOT}/bin/flutter" pub get)
+    supports_lockfile=true
     ;;
   melos)
     tool_path="${PUB_CACHE}/bin/melos"
     [[ -x ${tool_path} ]] || die "melos is unavailable at ${tool_path}; run 'merry-setup setup --bootstrap melos' first."
     bootstrap_command=("${tool_path}" bootstrap)
+    supports_lockfile=true
     ;;
   very-good)
     tool_path="${PUB_CACHE}/bin/very_good"
     [[ -x ${tool_path} ]] || die "very_good is unavailable at ${tool_path}; run 'merry-setup setup --bootstrap very-good' first."
+    # 'very_good packages get' documents only --recursive and --ignore, so this strategy never reads the lockfile state.
     bootstrap_command=("${tool_path}" packages get --recursive)
-    enforce_lockfile=false
     ;;
   esac
 
-  if [[ ${enforce_lockfile} == true ]]; then
+  if [[ ${supports_lockfile} == true ]] && lockfile_is_tracked "${project_dir}"; then
     bootstrap_command+=(--enforce-lockfile)
   fi
 

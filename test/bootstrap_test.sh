@@ -158,6 +158,22 @@ assert_log_excludes '--enforce-lockfile'
 pass "very-good bootstrap runs the recursive package get without a lockfile flag"
 
 reset_case
+track_lockfile
+mkdir -p "${DART_CACHE}/bin"
+cp "${TOOL_SHIM_TEMPLATE}" "${DART_CACHE}/bin/very_good"
+# shellcheck disable=SC2016 # The generated stub expands its runtime environment.
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "fatal: detected dubious ownership in repository at %s\n" "${PWD}" >&2' \
+  'exit 128' >"${TEST_ROOT}/commands/git"
+chmod +x "${TEST_ROOT}/commands/git"
+run_bootstrap "${DART_BIN}" --sdk dart --bootstrap very-good
+assert_status 0
+assert_log_contains 'CALL very_good|packages get --recursive'
+rm -f "${TEST_ROOT}/commands/git"
+pass "very-good bootstrap ignores an unreadable git checkout because it never reads the lockfile"
+
+reset_case
 run_bootstrap "${DART_BIN}" --sdk dart --bootstrap flutter
 assert_nonzero
 assert_stderr_contains "Option '--bootstrap flutter' requires '--sdk flutter'."
