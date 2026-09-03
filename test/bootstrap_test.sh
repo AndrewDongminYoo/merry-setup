@@ -28,7 +28,7 @@ reset_case() {
   rm -rf -- "${PROJECT_DIR:?}" "${TEST_ROOT:?}/managed/pub-cache"
   mkdir -p "${PROJECT_DIR}"
   printf 'name: fixture\n' >"${PROJECT_DIR}/pubspec.yaml"
-  unset PUB_GET_STATUS TOOL_COMMAND_STATUS || true
+  unset PUB_GET_STATUS TOOL_COMMAND_STATUS GITHUB_ENV GITHUB_PATH || true
 }
 
 track_lockfile() {
@@ -236,6 +236,20 @@ assert_nonzero
 assert_stderr_contains "Project bootstrap failed"
 assert_stdout_excludes 'bootstrap completed'
 pass "a failing pub get propagates its status and suppresses success"
+
+reset_case
+export GITHUB_ENV="${TEST_ROOT}/github-env"
+export GITHUB_PATH="${TEST_ROOT}/github-path"
+: >"${GITHUB_ENV}"
+: >"${GITHUB_PATH}"
+PATH="${DART_BIN}:${TEST_ROOT}/commands:${BASH%/*}:/usr/bin:/bin" run_cli bootstrap --sdk dart --bootstrap dart --persist-path github --project-dir "${PROJECT_DIR}"
+assert_status 0
+printf '%s\n' "PUB_CACHE=${DART_CACHE}" >"${TEST_ROOT}/expected-bootstrap-env"
+assert_file_equals "${TEST_ROOT}/expected-bootstrap-env" "${GITHUB_ENV}"
+printf '%s\n' "${TEST_ROOT}/managed/bin" "${DART_CACHE}/bin" "${DART_BIN}" >"${TEST_ROOT}/expected-bootstrap-path"
+assert_file_equals "${TEST_ROOT}/expected-bootstrap-path" "${GITHUB_PATH}"
+assert_log_contains 'CALL dart|pub get'
+pass "bootstrap applies the selected persistence adapter, which its contract excludes only for SDK and tool installation"
 
 reset_case
 run_bootstrap "${DART_BIN}" --sdk dart --bootstrap none

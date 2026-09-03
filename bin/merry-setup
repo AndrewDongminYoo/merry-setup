@@ -1313,6 +1313,8 @@ main() {
   validate_host
 
   if [[ ${command_name} == bootstrap ]]; then
+    # Bootstrap-only excludes SDK and global-tool installation and remote metadata, not persistence:
+    # '--persist-path' is a required option here too, and 'none' is the adapter defined as leaving files alone.
     locate_path_sdk "${sdk_family}" "${sdk_version}"
     resolve_pub_cache "${sdk_family}"
     apply_path_persistence "${persistence_adapter}"
