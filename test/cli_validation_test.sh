@@ -90,7 +90,14 @@ assert_nonzero
 assert_stderr_contains "Project directory does not contain pubspec.yaml: ${TEST_ROOT}/project"
 pass "current working directory project default"
 
+# Host validation runs after the manifest check, so an unsupported host proves the manifest step was skipped
+# while keeping the run away from the network. The curl stub records any download attempt.
+printf '%s\n' '#!/usr/bin/env bash' 'printf '\''Darwin\n'\''' >"${TEST_ROOT}/commands/uname"
+chmod +x "${TEST_ROOT}/commands/uname"
+create_recording_stub curl
 run_cli setup --sdk dart --bootstrap none --persist-path none --no-merry
 assert_nonzero
 assert_stderr_excludes "pubspec.yaml"
+assert_stderr_contains "Unsupported operating system: Darwin."
+assert_command_count 0 curl
 pass "bootstrap none skips manifest validation"
