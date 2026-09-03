@@ -195,3 +195,20 @@ assert_nonzero
 assert_stderr_contains "managed block"
 assert_marker_count 1 'export BROKEN=1'
 pass "bashrc adapter refuses to rewrite a block without an end marker"
+
+reset_case
+printf '# <<< merry-setup managed block <<<\nexport BEFORE=1\n# >>> merry-setup managed block >>>\nexport AFTER=1\n' >"${HOME}/.bashrc"
+cp "${HOME}/.bashrc" "${TEST_ROOT}/misordered-bashrc"
+run_setup dart 3.12.0 bashrc --trunk-path "${EXPLICIT_LAUNCHER}"
+assert_nonzero
+assert_stderr_contains "managed block"
+assert_file_equals "${TEST_ROOT}/misordered-bashrc" "${HOME}/.bashrc"
+pass "bashrc adapter refuses misordered markers and leaves the file untouched"
+
+reset_case
+printf '# >>> merry-setup managed block >>>\nexport OLD=1\n# <<< merry-setup managed block <<<\n# >>> merry-setup managed block >>>\nexport OLD=2\n# <<< merry-setup managed block <<<\n' >"${HOME}/.bashrc"
+run_setup dart 3.12.0 bashrc --trunk-path "${EXPLICIT_LAUNCHER}"
+assert_nonzero
+assert_stderr_contains "managed block"
+assert_marker_count 1 'export OLD=1'
+pass "bashrc adapter refuses duplicated blocks"

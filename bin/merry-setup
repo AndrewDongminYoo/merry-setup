@@ -774,19 +774,23 @@ write_bashrc_block() {
   local pub_bin="$2"
   local bashrc_file="${HOME}/.bashrc"
   local bashrc_line=""
-  local begin_count=0
-  local end_count=0
+  local block_count=0
   local in_block=false
+  local malformed_message="${bashrc_file} contains an incomplete, duplicated, or misordered merry-setup managed block; repair it before rerunning."
 
   if [[ -e ${bashrc_file} ]]; then
     [[ -f ${bashrc_file} ]] || die "${bashrc_file} is not a regular file."
     while IFS= read -r bashrc_line || [[ -n ${bashrc_line} ]]; do
-      [[ ${bashrc_line} != "${BASHRC_BLOCK_BEGIN}" ]] || ((begin_count += 1))
-      [[ ${bashrc_line} != "${BASHRC_BLOCK_END}" ]] || ((end_count += 1))
+      if [[ ${bashrc_line} == "${BASHRC_BLOCK_BEGIN}" ]]; then
+        [[ ${in_block} == false && ${block_count} -eq 0 ]] || die "${malformed_message}"
+        in_block=true
+      elif [[ ${bashrc_line} == "${BASHRC_BLOCK_END}" ]]; then
+        [[ ${in_block} == true ]] || die "${malformed_message}"
+        in_block=false
+        ((block_count += 1))
+      fi
     done <"${bashrc_file}"
-    if [[ ${begin_count} -gt 1 || ${end_count} -gt 1 || ${begin_count} -ne ${end_count} ]]; then
-      die "${bashrc_file} contains an incomplete or duplicated merry-setup managed block; repair it before rerunning."
-    fi
+    [[ ${in_block} == false ]] || die "${malformed_message}"
   fi
 
   ACTIVE_BASHRC_TEMP="$(mktemp "${HOME}/.bashrc.merry-setup.XXXXXX")"
