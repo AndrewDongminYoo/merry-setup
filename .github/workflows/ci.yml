@@ -30,3 +30,9 @@ jobs:
 
       - name: Run test suite
         run: bash test/run.sh
+
+      - name: Set up Trunk launcher
+        uses: trunk-io/trunk-action/setup@e1234e67a86010d61ddac8d8ebf4b783e2ffd2fa  # v2.0.0
+
+      - name: Run Trunk checks
+        run: '"$TRUNK_PATH" check --all --no-progress --no-fix'

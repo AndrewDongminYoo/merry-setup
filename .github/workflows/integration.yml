@@ -1,0 +1,107 @@
+---
+name: Integration
+
+# Real SDK installation on a Linux x64 runner. Manual or release-gated only:
+# each job downloads a full Dart or Flutter SDK, so it does not run on every push.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: read
+
+jobs:
+  dart-default:
+    name: Dart stable, Merry, dart bootstrap
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6, verified 2026-08-28
+        with:
+          persist-credentials: false
+
+      - name: Create Dart fixture project
+        run: |
+          mkdir -p fixture
+          printf 'name: fixture_dart\nenvironment:\n  sdk: ^3.12.0\n' >fixture/pubspec.yaml
+
+      - name: Run Merry Setup
+        uses: ./
+        with:
+          sdk: dart
+          bootstrap: dart
+          project-dir: fixture
+
+      - name: Verify tools from a later step
+        run: |
+          dart --version
+          merry --version
+          test -d "${PUB_CACHE}"
+
+  flutter-melos-flutterfire:
+    name: Flutter stable, Melos, FlutterFire, precache
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6, verified 2026-08-28
+        with:
+          persist-credentials: false
+
+      - name: Create Melos workspace fixture
+        run: |
+          mkdir -p fixture/packages/app
+          printf 'name: fixture_workspace\nenvironment:\n  sdk: ^3.12.0\nworkspace:\n  - packages/app\ndev_dependencies:\n  melos: ^7.0.0\n' >fixture/pubspec.yaml
+          printf 'name: fixture_app\nenvironment:\n  sdk: ^3.12.0\nresolution: workspace\n' >fixture/packages/app/pubspec.yaml
+
+      - name: Run Merry Setup
+        uses: ./
+        with:
+          sdk: flutter
+          bootstrap: melos
+          project-dir: fixture
+          bundles: |
+            flutterfire
+          precache: |
+            android
+            web
+            linux
+
+      - name: Verify tools from a later step
+        run: |
+          flutter --version
+          melos --version
+          flutterfire --version
+          firebase --version
+
+  dart-exact-very-good:
+    name: Dart 3.12.0, Merry, Very Good bootstrap
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6, verified 2026-08-28
+        with:
+          persist-credentials: false
+
+      - name: Create Dart fixture project
+        run: |
+          mkdir -p fixture
+          printf 'name: fixture_very_good\nenvironment:\n  sdk: ^3.12.0\n' >fixture/pubspec.yaml
+
+      - name: Run Merry Setup
+        uses: ./
+        with:
+          sdk: dart
+          sdk-version: 3.12.0
+          bootstrap: very-good
+          project-dir: fixture
+
+      - name: Verify tools from a later step
+        run: |
+          dart --version | grep -F '3.12.0'
+          merry --version
+          very_good --version
