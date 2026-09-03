@@ -10,6 +10,10 @@ readonly tests=(
   "${TEST_DIR}/action_metadata_test.sh"
   "${TEST_DIR}/sdk_installation_test.sh"
   "${TEST_DIR}/tools_and_bundles_test.sh"
+  "${TEST_DIR}/precache_test.sh"
+  "${TEST_DIR}/trunk_and_persistence_test.sh"
+  "${TEST_DIR}/bootstrap_test.sh"
+  "${TEST_DIR}/setup_flow_test.sh"
 )
 
 for test_path in "${tests[@]}"; do

@@ -226,10 +226,10 @@ Expected: exact recorded argv proves one activation per package, safe constraint
 - Modify: `bin/merry-setup`
 - Create: `test/precache_test.sh`
 
-- [ ] Write the complete failing matrix for no target, `android`, `web,android`, repeated mixed targets, Dart conflicts, empty comma tokens, `none`, `ios`, `all`, and `android_maven`.
-- [ ] Implement target parsing, rejection, deduplication, and canonical order without exposing upstream granular flags.
-- [ ] Invoke `flutter precache` exactly once only when the canonical set is nonempty.
-- [ ] Propagate a failing precache status and suppress final success.
+- [x] Write the complete failing matrix for no target, `android`, `web,android`, repeated mixed targets, Dart conflicts, empty comma tokens, `none`, `ios`, `all`, and `android_maven`.
+- [x] Implement target parsing, rejection, deduplication, and canonical order without exposing upstream granular flags.
+- [x] Invoke `flutter precache` exactly once only when the canonical set is nonempty.
+- [x] Propagate a failing precache status and suppress final success.
 
 ```bash
 /opt/homebrew/bin/bash test/precache_test.sh
@@ -245,10 +245,10 @@ Expected: the stub log contains either zero precache calls or one exact `flutter
 - Modify: `bin/merry-setup`
 - Create: `test/trunk_and_persistence_test.sh`
 
-- [ ] Write failing Trunk tests for an explicit executable, invalid explicit path, documented repository-local launcher reuse, official launcher fallback, logged path/version, and no independent version index.
-- [ ] Implement explicit-path-first selection, repository-local reuse, and the narrow official portable-launcher fallback. Keep Action setup delegated through `TRUNK_PATH`.
-- [ ] Write failing persistence tests for `none`, missing GitHub environment files, `$GITHUB_ENV` content, `$GITHUB_PATH` order, shell-safe `.bashrc` values, one managed block after reruns, and replacement of stale exact-version paths.
-- [ ] Implement current-process exports before tools, `github` file writes, and one idempotently replaced `bashrc` block. Use safe single-quote encoding for persisted literal paths.
+- [x] Write failing Trunk tests for an explicit executable, invalid explicit path, documented repository-local launcher reuse, official launcher fallback, logged path/version, and no independent version index.
+- [x] Implement explicit-path-first selection, repository-local reuse, and the narrow official portable-launcher fallback. Keep Action setup delegated through `TRUNK_PATH`.
+- [x] Write failing persistence tests for `none`, missing GitHub environment files, `$GITHUB_ENV` content, `$GITHUB_PATH` order, shell-safe `.bashrc` values, one managed block after reruns, and replacement of stale exact-version paths.
+- [x] Implement current-process exports before tools, `github` file writes, and one idempotently replaced `bashrc` block. Use safe single-quote encoding for persisted literal paths.
 
 ```bash
 /opt/homebrew/bin/bash test/trunk_and_persistence_test.sh
@@ -266,12 +266,12 @@ Expected: every child command observes one resolved `PUB_CACHE`; persistence fil
 - Create: `test/setup_flow_test.sh`
 - Modify: `test/run.sh`
 
-- [ ] Write failing bootstrap command tests for PATH-selected Dart and Flutter families, exact version mismatch, missing SDK, runtime below 3.12.0, no remote metadata lookup, managed cache derivation, and deleted manifest after a successful Action preflight.
-- [ ] Write failing strategy tests for `none`, Dart, Flutter, Melos, and Very Good, plus tracked, untracked, and absent root lockfiles.
-- [ ] Implement strategy argv exactly: `dart pub get`, `flutter pub get`, `melos bootstrap`, and the documented recursive Very Good package-get command. Add `--enforce-lockfile` only where the approved strategy supports it and the root lockfile is tracked.
-- [ ] Assemble setup ordering: full validation, host and release resolution, SDK reuse/install, runtime recheck, pub cache, package activation, precache, Trunk, persistence, bootstrap, and final success.
-- [ ] Assemble bootstrap-only ordering without SDK/global-tool installation or remote metadata.
-- [ ] Run setup twice against one fixture and prove SDK reuse, one package activation per invocation, one current profile block, usable tool shims, cleanup, failure propagation, and no premature success.
+- [x] Write failing bootstrap command tests for PATH-selected Dart and Flutter families, exact version mismatch, missing SDK, runtime below 3.12.0, no remote metadata lookup, managed cache derivation, and deleted manifest after a successful Action preflight.
+- [x] Write failing strategy tests for `none`, Dart, Flutter, Melos, and Very Good, plus tracked, untracked, and absent root lockfiles.
+- [x] Implement strategy argv exactly: `dart pub get`, `flutter pub get`, `melos bootstrap`, and the documented recursive Very Good package-get command. Add `--enforce-lockfile` only where the approved strategy supports it and the root lockfile is tracked.
+- [x] Assemble setup ordering: full validation, host and release resolution, SDK reuse/install, runtime recheck, pub cache, package activation, precache, Trunk, persistence, bootstrap, and final success.
+- [x] Assemble bootstrap-only ordering without SDK/global-tool installation or remote metadata.
+- [x] Run setup twice against one fixture and prove SDK reuse, one package activation per invocation, one current profile block, usable tool shims, cleanup, failure propagation, and no premature success.
 
 ```bash
 /opt/homebrew/bin/bash test/bootstrap_test.sh
@@ -292,17 +292,18 @@ Expected: all black-box tests pass and no test reaches the network or the operat
 - Create: `.github/workflows/integration.yml`
 
 - [x] Add the standard MIT text with `Copyright (c) 2026 Dongmin Yu` and no placeholder.
-- [ ] Update README with CLI and Action contracts, immutable-revision download-to-file examples, no `curl | bash`, environment contracts, target/tool boundaries, debug warning, and third-party license boundary.
-- [ ] Resolve every third-party workflow Action tag to a current verified full commit SHA before inserting it. Reject any value that is not exactly 40 hexadecimal characters.
+- [x] Update README with CLI and Action contracts, immutable-revision download-to-file examples, no `curl | bash`, environment contracts, target/tool boundaries, debug warning, and third-party license boundary.
+- [x] Resolve every third-party workflow Action tag to a current verified full commit SHA before inserting it. Reject any value that is not exactly 40 hexadecimal characters.
 
 ```bash
-git ls-remote https://github.com/actions/checkout.git 'refs/tags/v4^{}' refs/tags/v4
+git ls-remote https://github.com/actions/checkout.git 'refs/tags/v6^{}' refs/tags/v6
+git ls-remote https://github.com/trunk-io/trunk-action.git 'refs/tags/v2.0.0^{}' refs/tags/v2.0.0
 ```
 
 Expected: select the peeled tag commit when present and record the verification date in a YAML comment without promising that it remains upstream-latest.
 
-- [ ] Add a fast Linux x64 CI workflow for explicit Bash syntax, ShellCheck, Trunk checks, and `test/run.sh`.
-- [ ] Add isolated real integration jobs for Dart/default Merry/bootstrap Dart, Flutter/Melos/FlutterFire/all three precache targets, and exact Dart 3.12.0/Merry/Very Good CLI. Keep the real integration workflow manual or release-gated until its installation cost and runtime are observed.
+- [x] Add a fast Linux x64 CI workflow for explicit Bash syntax, ShellCheck, Trunk checks, and `test/run.sh`.
+- [x] Add isolated real integration jobs for Dart/default Merry/bootstrap Dart, Flutter/Melos/FlutterFire/all three precache targets, and exact Dart 3.12.0/Merry/Very Good CLI. Keep the real integration workflow manual or release-gated until its installation cost and runtime are observed.
 
 ```bash
 trunk check --no-fix --filter=actionlint .github/workflows/ci.yml .github/workflows/integration.yml
@@ -318,8 +319,8 @@ Expected: public metadata and documentation pass their explicit linters. Local e
 
 - Verify only; modify the smallest owning file if a check exposes a real defect.
 
-- [ ] Prove the full custom test entry point can fail by temporarily making one isolated fixture invalid, record the expected assertion, restore it, and rerun.
-- [ ] Run the deployment-interpreter syntax and static checks.
+- [x] Prove the full custom test entry point can fail by temporarily making one isolated fixture invalid, record the expected assertion, restore it, and rerun.
+- [x] Run the deployment-interpreter syntax and static checks.
 
 ```bash
 /opt/homebrew/bin/bash -n bin/merry-setup action/preflight.sh action/run.sh test/*.sh
@@ -331,7 +332,7 @@ git diff --check
 
 Expected: all local checks pass with no real SDK download and no unscoped file mutation.
 
-- [ ] Audit the public file set for private workflow names, unresolved placeholders, unpinned third-party Actions, unsafe Action expression interpolation, missing fence languages, and executable bits.
+- [x] Audit the public file set for private workflow names, unresolved placeholders, unpinned third-party Actions, unsafe Action expression interpolation, missing fence languages, and executable bits.
 
 ```bash
 rg -n --hidden --glob '!.git/**' '[T]ODO|[T]BD|[P]LACEHOLDER|curl[^\n]*\|[^\n]*(bash|sh)|uses: [^@]+@(main|master|v[0-9]+)$' .
@@ -340,4 +341,4 @@ git status --short
 
 Expected: the audit prints no public boundary violation or unresolved placeholder; status lists only intended local implementation files and preserved pre-existing changes.
 
-- [ ] Report the minimum repeatable verification command and explicitly mark real Linux integration as pending until remote execution is authorized and observed.
+- [x] Report the minimum repeatable verification command and explicitly mark real Linux integration as pending until remote execution is authorized and observed.

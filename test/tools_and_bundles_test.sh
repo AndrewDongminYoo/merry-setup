@@ -74,6 +74,7 @@ trap cleanup_test_env EXIT
 readonly FIXTURE_DIR="${TOOLS_TEST_DIR}/fixtures"
 
 printf 'name: fixture\n' >"${TEST_ROOT}/project/pubspec.yaml"
+write_trunk_launcher_stub "${TEST_ROOT}/launchers/trunk"
 
 create_host_stub() {
   local stub_path="${TEST_ROOT}/commands/uname"
@@ -243,6 +244,7 @@ run_setup() {
     --bootstrap "${bootstrap_strategy}" \
     --persist-path none \
     --project-dir "${TEST_ROOT}/project" \
+    --trunk-path "${TEST_ROOT}/launchers/trunk" \
     "$@"
 }
 
@@ -271,7 +273,7 @@ prepare_flutter_case() {
 case_managed_dart_cache_and_merry() {
   prepare_dart_case
   run_setup dart 3.12.0 none
-  assert_nonzero
+  assert_status 0
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/dart/3.12.0|pub|global|activate|merry"
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/dart/3.12.0|pub|global|list"
   assert_stdout_contains 'Activated Dart package: name=merry version=9.9.9'
@@ -285,7 +287,7 @@ case_prerelease_tool_version() {
   prepare_dart_case
   export DART_TOOL_VERSION='9.9.9-dev.1+build.4'
   run_setup dart 3.12.0 none
-  assert_nonzero
+  assert_status 0
   assert_stdout_contains 'Activated Dart package: name=merry version=9.9.9-dev.1+build.4'
   assert_stdout_contains 'Tool version: package=merry executable=merry version=9.9.9-dev.1+build.4'
   pass "tool version logs preserve prerelease and build suffixes"
@@ -294,7 +296,7 @@ case_prerelease_tool_version() {
 case_stable_managed_cache() {
   prepare_dart_case
   run_setup dart stable none
-  assert_nonzero
+  assert_status 0
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/dart/3.12.0|pub|global|activate|merry"
   assert_log_excludes '/pub-cache/dart/stable'
   pass "stable resolves before managed cache derivation"
@@ -303,7 +305,7 @@ case_stable_managed_cache() {
 case_managed_flutter_cache() {
   prepare_flutter_case
   run_setup flutter 3.44.0 none
-  assert_nonzero
+  assert_status 0
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/flutter/3.44.0|pub|global|activate|merry"
   assert_log_excludes '/pub-cache/flutter/3.12.0'
   pass "managed Flutter cache is keyed by Flutter version"
@@ -313,7 +315,7 @@ case_explicit_pub_cache() {
   prepare_dart_case
   export PUB_CACHE="${TEST_ROOT}/explicit pub cache"
   run_setup dart 3.12.0 none
-  assert_nonzero
+  assert_status 0
   assert_log_contains "CALL dart|PUB_CACHE=${PUB_CACHE}|pub|global|activate|merry"
   assert_log_excludes "${MERRY_SETUP_HOME}/pub-cache"
   pass "explicit PUB_CACHE overrides managed cache"
@@ -323,9 +325,9 @@ case_exact_version_cache_separation() {
   prepare_dart_case 3.12.0
   create_dart_sdk 3.13.0
   run_setup dart 3.12.0 none
-  assert_nonzero
+  assert_status 0
   run_setup dart 3.13.0 none
-  assert_nonzero
+  assert_status 0
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/dart/3.12.0|pub|global|activate|merry"
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/dart/3.13.0|pub|global|activate|merry"
   pass "managed caches separate exact SDK versions"
@@ -374,7 +376,7 @@ case_path_delimiter_pub_cache() {
 case_merry_opt_out() {
   prepare_dart_case
   run_setup dart 3.12.0 none --no-merry
-  assert_nonzero
+  assert_status 0
   assert_log_excludes '|pub|global|activate|merry'
   assert_log_excludes '|pub|global|list'
   pass "Merry opt-out produces no activation"
@@ -392,7 +394,7 @@ case_empty_merry_opt_out_conflict() {
 case_merry_version() {
   prepare_dart_case
   run_setup dart 3.12.0 none --merry-version '^2.3.0'
-  assert_nonzero
+  assert_status 0
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/dart/3.12.0|pub|global|activate|merry|^2.3.0"
   pass "Merry version is passed as a separate constraint"
 }
@@ -418,7 +420,7 @@ case_option_like_merry_version() {
 case_explicit_and_implicit_packages() {
   prepare_dart_case
   run_setup dart 3.12.0 melos --dart-package 'melos=^8.0.0' --dart-package 'custom_tool=>=1.0.0 <2.0.0'
-  assert_nonzero
+  assert_status 0
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/dart/3.12.0|pub|global|activate|melos|^8.0.0"
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/dart/3.12.0|pub|global|activate|custom_tool|>=1.0.0 <2.0.0"
   [[ $(grep -c -F '|pub|global|activate|melos' "${TEST_COMMAND_LOG}") -eq 1 ]] || fail 'Melos activated more than once'
@@ -430,7 +432,7 @@ case_explicit_and_implicit_packages() {
 case_implicit_melos() {
   prepare_dart_case
   run_setup dart 3.12.0 melos --no-merry
-  assert_nonzero
+  assert_status 0
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/dart/3.12.0|pub|global|activate|melos"
   pass "Melos bootstrap implies one global package"
 }
@@ -438,7 +440,7 @@ case_implicit_melos() {
 case_implicit_very_good() {
   prepare_dart_case
   run_setup dart 3.12.0 very-good --no-merry
-  assert_nonzero
+  assert_status 0
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/dart/3.12.0|pub|global|activate|very_good_cli"
   assert_log_contains 'CALL very_good|--version'
   assert_stdout_contains 'Tool version: package=very_good_cli executable=very_good version=9.9.9'
@@ -520,7 +522,7 @@ case_reserved_package_name() {
 case_flutterfire_exact_version() {
   prepare_flutter_case
   run_setup flutter 3.44.0 none --bundle flutterfire --dart-package 'flutterfire_cli=^1.4.0' --firebase-tools-version 14.2.1
-  assert_nonzero
+  assert_status 0
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/flutter/3.44.0|pub|global|activate|flutterfire_cli|^1.4.0"
   [[ $(grep -c -F '|pub|global|activate|flutterfire_cli' "${TEST_COMMAND_LOG}") -eq 1 ]] || fail 'FlutterFire CLI activated more than once'
   assert_log_contains 'CALL npm|install|--global|firebase-tools@14.2.1'
@@ -535,14 +537,14 @@ case_flutterfire_version_mismatch() {
   run_setup flutter 3.44.0 none --bundle flutterfire --firebase-tools-version 14.2.1 --no-merry
   assert_nonzero
   assert_stderr_contains 'Installed Firebase Tools version 14.2.0 does not match requested version 14.2.1.'
-  assert_stderr_excludes 'Remaining setup steps are not implemented'
+  assert_stdout_excludes 'Merry setup completed'
   pass "Firebase Tools exact-version mismatch fails after installation"
 }
 
 case_flutterfire_default_version() {
   prepare_flutter_case
   run_setup flutter 3.44.0 none --bundle flutterfire --no-merry
-  assert_nonzero
+  assert_status 0
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/flutter/3.44.0|pub|global|activate|flutterfire_cli"
   assert_log_contains 'CALL npm|install|--global|firebase-tools'
   assert_stdout_contains 'Firebase Tools version: 15.0.0'
@@ -552,7 +554,7 @@ case_flutterfire_default_version() {
 case_standalone_flutterfire_cli() {
   prepare_dart_case
   run_setup dart 3.12.0 none --dart-package flutterfire_cli --no-merry
-  assert_nonzero
+  assert_status 0
   assert_log_contains "CALL dart|PUB_CACHE=${MERRY_SETUP_HOME}/pub-cache/dart/3.12.0|pub|global|activate|flutterfire_cli"
   assert_log_excludes 'CALL npm'
   pass "standalone FlutterFire CLI has no npm side effect"
@@ -611,7 +613,7 @@ case_flutterfire_uses_npm_prefix_executable() {
   printf '%s\n' '#!/usr/bin/env bash' 'printf "CALL stale-firebase|%s\\n" "$@" >>"${TEST_COMMAND_LOG}"' 'printf "14.2.1\\n"' >"${TEST_ROOT}/commands/firebase"
   chmod +x "${TEST_ROOT}/commands/firebase"
   run_setup flutter 3.44.0 none --bundle flutterfire --firebase-tools-version 14.2.1 --no-merry
-  assert_nonzero
+  assert_status 0
   assert_log_contains 'CALL npm|prefix|--global'
   assert_log_contains 'CALL npm-prefix-firebase|--version'
   assert_log_excludes 'CALL stale-firebase|--version'
@@ -627,7 +629,7 @@ case_flutterfire_uses_validated_npm() {
   printf '%s\n' '#!/usr/bin/env bash' 'printf "CALL fake-pub-cache-npm|%s\\n" "$@" >>"${TEST_COMMAND_LOG}"' 'exit 27' >"${PUB_CACHE}/bin/npm"
   chmod +x "${PUB_CACHE}/bin/npm"
   run_setup flutter 3.44.0 none --bundle flutterfire --no-merry
-  assert_nonzero
+  assert_status 0
   assert_log_contains 'CALL npm|install|--global|firebase-tools'
   assert_log_contains 'CALL npm|prefix|--global'
   assert_log_excludes 'CALL fake-pub-cache-npm'
@@ -650,7 +652,7 @@ case_invalid_npm_prefix() {
 case_flutterfire_precedes_activated_node() {
   prepare_flutter_case
   run_setup flutter 3.44.0 none --bundle flutterfire --dart-package node_tool --no-merry
-  assert_nonzero
+  assert_status 0
   assert_log_contains 'CALL npm|prefix|--global'
   assert_log_contains 'CALL npm|install|--global|firebase-tools'
   assert_log_excludes 'CALL node|'
@@ -684,7 +686,7 @@ case_failed_npm_install() {
   assert_nonzero
   assert_stderr_contains 'Failed to install Firebase Tools through npm.'
   assert_log_contains 'CALL npm|install|--global|firebase-tools'
-  assert_stderr_excludes 'Remaining setup steps are not implemented'
+  assert_stdout_excludes 'Merry setup completed'
   pass "failed npm install suppresses remaining setup success"
 }
 
@@ -699,7 +701,7 @@ case_failed_activation_preserves_cache() {
   assert_stderr_contains "Failed to activate Dart package 'broken'."
   assert_path_exists "${expected_cache}/sentinel"
   assert_stdout_contains 'Resolved SDK:'
-  assert_stderr_excludes 'Remaining setup steps are not implemented'
+  assert_stdout_excludes 'Merry setup completed'
   pass "failed activation preserves the resolved pub cache"
 }
 

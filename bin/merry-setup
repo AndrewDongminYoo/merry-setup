@@ -9,10 +9,17 @@ readonly MINIMUM_DART_RUNTIME=3.12.0
 readonly DART_RELEASE_BASE_URL=https://storage.googleapis.com/dart-archive/channels/stable/release
 readonly FLUTTER_RELEASES_URL=https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json
 readonly FLUTTER_RELEASE_BASE_URL=https://storage.googleapis.com/flutter_infra_release/releases
+readonly TRUNK_LAUNCHER_URL=https://trunk.io/releases/trunk
+readonly BASHRC_BLOCK_BEGIN='# >>> merry-setup managed block >>>'
+readonly BASHRC_BLOCK_END='# <<< merry-setup managed block <<<'
 
 ACTIVE_FAMILY_ROOT=""
 ACTIVE_METADATA_FILE=""
 ACTIVE_STAGE_DIR=""
+ACTIVE_TRUNK_STAGE=""
+ACTIVE_BASHRC_TEMP=""
+LOCAL_TOOL_BIN=""
+TRUNK_LAUNCHER=""
 RESOLVED_SDK_VERSION=""
 RESOLVED_DART_VERSION=""
 RESOLVED_DART_ARCH=""
@@ -21,6 +28,9 @@ RESOLVED_ARCHIVE_SHA256=""
 CURRENT_SDK_ROOT=""
 HOST_ARCHITECTURE=""
 FLUTTERFIRE_BUNDLE_ENABLED=false
+PRECACHE_ANDROID=false
+PRECACHE_WEB=false
+PRECACHE_LINUX=false
 NPM_EXECUTABLE=""
 NPM_GLOBAL_BIN=""
 declare -a ACTIVATION_PACKAGE_NAMES=()
@@ -36,7 +46,23 @@ usage() {
   printf '%s\n' \
     'Usage:' \
     '  merry-setup setup --sdk dart|flutter --bootstrap STRATEGY --persist-path ADAPTER [options]' \
-    '  merry-setup bootstrap --sdk dart|flutter --bootstrap STRATEGY --persist-path ADAPTER [options]'
+    '  merry-setup bootstrap --sdk dart|flutter --bootstrap STRATEGY --persist-path ADAPTER [options]' \
+    '' \
+    'STRATEGY: none | dart | flutter | melos | very-good' \
+    'ADAPTER:  none | bashrc | github' \
+    '' \
+    'Options:' \
+    '  --sdk-version stable|<exact>       SDK version (default: stable)' \
+    '  --project-dir <path>               project root containing pubspec.yaml (default: current directory)' \
+    '  --no-merry                         skip the default merry activation' \
+    '  --merry-version <constraint>       pub constraint for merry' \
+    '  --dart-package <name>[=<constraint>]  additional global package (repeatable)' \
+    '  --bundle flutterfire               activate flutterfire_cli and install firebase-tools (repeatable)' \
+    '  --firebase-tools-version <exact>   exact firebase-tools version for the flutterfire bundle' \
+    '  --precache <targets>               comma-separated android, web, linux (repeatable; flutter only)' \
+    '  --trunk-path <path>                explicit Trunk launcher' \
+    '' \
+    'Environment: MERRY_SETUP_HOME (default ~/.merry-setup), PUB_CACHE (override), DEBUG=1 (trace)'
 }
 
 require_option_value() {
@@ -77,6 +103,14 @@ cleanup_sdk_transients() {
 
   if [[ -n ${ACTIVE_STAGE_DIR} && -n ${ACTIVE_FAMILY_ROOT} && ${ACTIVE_STAGE_DIR} == "${ACTIVE_FAMILY_ROOT}/."*.staging.* ]]; then
     rm -rf -- "${ACTIVE_STAGE_DIR}"
+  fi
+
+  if [[ -n ${ACTIVE_TRUNK_STAGE} && -n ${LOCAL_TOOL_BIN} && ${ACTIVE_TRUNK_STAGE} == "${LOCAL_TOOL_BIN}/.trunk."* ]]; then
+    rm -f -- "${ACTIVE_TRUNK_STAGE}"
+  fi
+
+  if [[ -n ${ACTIVE_BASHRC_TEMP} && ${ACTIVE_BASHRC_TEMP} == *"/.bashrc.merry-setup."* ]]; then
+    rm -f -- "${ACTIVE_BASHRC_TEMP}"
   fi
 }
 
@@ -148,7 +182,7 @@ download_file() {
   local description="$3"
 
   command -v curl >/dev/null 2>&1 || die "curl is required to download ${description}."
-  if ! curl --fail --silent --show-error --location --output "${destination_file}" "${source_url}"; then
+  if ! curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "${destination_file}" "${source_url}"; then
     die "Failed to download ${description}: ${source_url}"
   fi
   [[ -s ${destination_file} ]] || die "Downloaded ${description} is empty: ${source_url}"
@@ -616,6 +650,208 @@ validate_firebase_tools() {
   fi
 }
 
+validate_precache_targets() {
+  local precache_input=""
+  local precache_target=""
+  local -a precache_targets=()
+
+  PRECACHE_ANDROID=false
+  PRECACHE_WEB=false
+  PRECACHE_LINUX=false
+
+  for precache_input in "$@"; do
+    [[ -n ${precache_input} && ! ${precache_input} =~ [[:cntrl:]] ]] || die "Option '--precache' requires a nonempty target list."
+    if [[ ${precache_input} == ,* || ${precache_input} == *, || ${precache_input} == *,,* ]]; then
+      die "Option '--precache' contains an empty target in '${precache_input}'."
+    fi
+
+    IFS=, read -r -a precache_targets <<<"${precache_input}"
+    for precache_target in "${precache_targets[@]}"; do
+      case "${precache_target}" in
+      android)
+        PRECACHE_ANDROID=true
+        ;;
+      web)
+        PRECACHE_WEB=true
+        ;;
+      linux)
+        PRECACHE_LINUX=true
+        ;;
+      *)
+        die "Option '--precache' must contain only android, web, or linux targets; received '${precache_target}'."
+        ;;
+      esac
+    done
+  done
+}
+
+run_flutter_precache() {
+  local -a precache_command=("${CURRENT_SDK_ROOT}/bin/flutter" precache)
+
+  if [[ ${PRECACHE_ANDROID} == false && ${PRECACHE_WEB} == false && ${PRECACHE_LINUX} == false ]]; then
+    return 0
+  fi
+
+  if [[ ${PRECACHE_ANDROID} == true ]]; then
+    precache_command+=(--android)
+  fi
+  if [[ ${PRECACHE_WEB} == true ]]; then
+    precache_command+=(--web)
+  fi
+  if [[ ${PRECACHE_LINUX} == true ]]; then
+    precache_command+=(--linux)
+  fi
+
+  "${precache_command[@]}" || die "Flutter precache failed: ${precache_command[*]:2}"
+  printf 'Flutter precache completed: %s\n' "${precache_command[*]:2}"
+}
+
+shell_single_quote() {
+  local value="$1"
+  local quote="'"
+
+  printf "'%s'" "${value//${quote}/${quote}\\${quote}${quote}}"
+}
+
+validate_trunk_path() {
+  local requested_path="$1"
+  local launcher_dir=""
+
+  TRUNK_LAUNCHER=""
+  [[ -n ${requested_path} ]] || return 0
+  [[ ! ${requested_path} =~ [[:cntrl:]] && -f ${requested_path} && -x ${requested_path} ]] || die "Option '--trunk-path' must point to an executable Trunk launcher; received '${requested_path}'."
+  launcher_dir="${requested_path%/*}"
+  [[ ${requested_path} == */* ]] || launcher_dir=.
+  [[ -n ${launcher_dir} ]] || launcher_dir=/
+  launcher_dir="$(cd "${launcher_dir}" && pwd -P)" || die "Option '--trunk-path' could not be resolved: '${requested_path}'."
+  TRUNK_LAUNCHER="${launcher_dir}/${requested_path##*/}"
+}
+
+validate_persistence_environment() {
+  local persistence_adapter="$1"
+
+  case "${persistence_adapter}" in
+  github)
+    [[ -n ${GITHUB_ENV:-} && -f ${GITHUB_ENV} && -w ${GITHUB_ENV} ]] || die "GITHUB_ENV must point to a writable file when '--persist-path github' is selected."
+    [[ -n ${GITHUB_PATH:-} && -f ${GITHUB_PATH} && -w ${GITHUB_PATH} ]] || die "GITHUB_PATH must point to a writable file when '--persist-path github' is selected."
+    ;;
+  bashrc)
+    [[ -n ${HOME:-} && -d ${HOME} ]] || die "HOME must point to a directory when '--persist-path bashrc' is selected."
+    ;;
+  esac
+}
+
+resolve_trunk_launcher() {
+  local project_dir="$1"
+  local candidate_path=""
+  local final_launcher="${LOCAL_TOOL_BIN}/trunk"
+
+  if [[ -z ${TRUNK_LAUNCHER} ]]; then
+    for candidate_path in "${project_dir}/.trunk/bin/trunk" "${project_dir}/tools/trunk" "${project_dir}/trunk" "${final_launcher}"; do
+      if [[ -f ${candidate_path} && -x ${candidate_path} ]]; then
+        TRUNK_LAUNCHER="${candidate_path}"
+        break
+      fi
+    done
+  fi
+
+  if [[ -z ${TRUNK_LAUNCHER} ]]; then
+    mkdir -p -- "${LOCAL_TOOL_BIN}"
+    ACTIVE_TRUNK_STAGE="$(mktemp "${LOCAL_TOOL_BIN}/.trunk.XXXXXX")"
+    download_file "${TRUNK_LAUNCHER_URL}" "${ACTIVE_TRUNK_STAGE}" "Trunk launcher"
+    chmod 0755 "${ACTIVE_TRUNK_STAGE}"
+    # Validate the staged download before publishing it, so a truncated file or an HTTP error page never becomes the reused launcher.
+    "${ACTIVE_TRUNK_STAGE}" version || die "Downloaded Trunk launcher failed to report its version; it was not installed."
+    mv -f -- "${ACTIVE_TRUNK_STAGE}" "${final_launcher}" || die "Failed to install the Trunk launcher at ${final_launcher}."
+    ACTIVE_TRUNK_STAGE=""
+    TRUNK_LAUNCHER="${final_launcher}"
+    printf 'Trunk launcher: %s\n' "${TRUNK_LAUNCHER}"
+    return 0
+  fi
+
+  printf 'Trunk launcher: %s\n' "${TRUNK_LAUNCHER}"
+  "${TRUNK_LAUNCHER}" version || die "Trunk launcher failed to report its version: ${TRUNK_LAUNCHER}"
+}
+
+write_bashrc_block() {
+  local sdk_bin="$1"
+  local pub_bin="$2"
+  local bashrc_file="${HOME}/.bashrc"
+  local bashrc_line=""
+  local block_count=0
+  local in_block=false
+  local malformed_message="${bashrc_file} contains an incomplete, duplicated, or misordered merry-setup managed block; repair it before rerunning."
+
+  if [[ -L ${bashrc_file} ]]; then
+    # Write through a symlinked .bashrc (a dotfiles checkout, for example) to its target so the link survives.
+    command -v readlink >/dev/null 2>&1 || die "${bashrc_file} is a symbolic link and readlink is unavailable to resolve it."
+    bashrc_file="$(readlink -f "${bashrc_file}")" || die "Failed to resolve the symbolic link ${HOME}/.bashrc."
+  fi
+
+  if [[ -e ${bashrc_file} ]]; then
+    [[ -f ${bashrc_file} ]] || die "${bashrc_file} is not a regular file."
+    while IFS= read -r bashrc_line || [[ -n ${bashrc_line} ]]; do
+      if [[ ${bashrc_line} == "${BASHRC_BLOCK_BEGIN}" ]]; then
+        [[ ${in_block} == false && ${block_count} -eq 0 ]] || die "${malformed_message}"
+        in_block=true
+      elif [[ ${bashrc_line} == "${BASHRC_BLOCK_END}" ]]; then
+        [[ ${in_block} == true ]] || die "${malformed_message}"
+        in_block=false
+        ((block_count += 1))
+      fi
+    done <"${bashrc_file}"
+    [[ ${in_block} == false ]] || die "${malformed_message}"
+  fi
+
+  ACTIVE_BASHRC_TEMP="$(mktemp "${bashrc_file%/*}/.bashrc.merry-setup.XXXXXX")"
+  if [[ -f ${bashrc_file} ]]; then
+    cp -p -- "${bashrc_file}" "${ACTIVE_BASHRC_TEMP}" || die "Failed to stage ${bashrc_file} for rewriting."
+  fi
+  {
+    if [[ -f ${bashrc_file} ]]; then
+      while IFS= read -r bashrc_line || [[ -n ${bashrc_line} ]]; do
+        if [[ ${bashrc_line} == "${BASHRC_BLOCK_BEGIN}" ]]; then
+          in_block=true
+          continue
+        fi
+        if [[ ${bashrc_line} == "${BASHRC_BLOCK_END}" ]]; then
+          in_block=false
+          continue
+        fi
+        [[ ${in_block} == true ]] || printf '%s\n' "${bashrc_line}"
+      done <"${bashrc_file}"
+    fi
+    printf '%s\n' \
+      "${BASHRC_BLOCK_BEGIN}" \
+      "export PUB_CACHE=$(shell_single_quote "${PUB_CACHE}")" \
+      "export PATH=$(shell_single_quote "${sdk_bin}"):$(shell_single_quote "${pub_bin}"):$(shell_single_quote "${LOCAL_TOOL_BIN}"):\"\${PATH}\"" \
+      "${BASHRC_BLOCK_END}"
+  } >"${ACTIVE_BASHRC_TEMP}"
+  # The staged copy carries the original mode, and the rename publishes the complete file in one step.
+  mv -f -- "${ACTIVE_BASHRC_TEMP}" "${bashrc_file}" || die "Failed to update ${bashrc_file}."
+  ACTIVE_BASHRC_TEMP=""
+}
+
+apply_path_persistence() {
+  local persistence_adapter="$1"
+  local sdk_bin="${CURRENT_SDK_ROOT}/bin"
+  local pub_bin="${PUB_CACHE}/bin"
+
+  case "${persistence_adapter}" in
+  none)
+    ;;
+  github)
+    printf 'PUB_CACHE=%s\n' "${PUB_CACHE}" >>"${GITHUB_ENV}" || die "Failed to write PUB_CACHE to GITHUB_ENV."
+    printf '%s\n' "${LOCAL_TOOL_BIN}" "${pub_bin}" "${sdk_bin}" >>"${GITHUB_PATH}" || die "Failed to write PATH entries to GITHUB_PATH."
+    ;;
+  bashrc)
+    write_bashrc_block "${sdk_bin}" "${pub_bin}"
+    ;;
+  esac
+
+  printf 'Persisted PUB_CACHE and PATH: adapter=%s\n' "${persistence_adapter}"
+}
+
 is_valid_dart_package_name() {
   local package_name="$1"
 
@@ -690,7 +926,7 @@ resolve_pub_cache() {
   export PUB_CACHE
 
   mkdir -p -- "${PUB_CACHE}/bin"
-  PATH="${CURRENT_SDK_ROOT}/bin:${PUB_CACHE}/bin${NPM_GLOBAL_BIN:+:${NPM_GLOBAL_BIN}}${PATH:+:${PATH}}"
+  PATH="${CURRENT_SDK_ROOT}/bin:${PUB_CACHE}/bin:${LOCAL_TOOL_BIN}${NPM_GLOBAL_BIN:+:${NPM_GLOBAL_BIN}}${PATH:+:${PATH}}"
   export PATH
   printf 'Resolved PUB_CACHE: %s\n' "${PUB_CACHE}"
 }
@@ -802,6 +1038,111 @@ install_flutterfire_bundle() {
     die "Installed Firebase Tools version ${actual_firebase_version} does not match requested version ${firebase_tools_version}."
   fi
   printf 'Firebase Tools version: %s\n' "${actual_firebase_version}"
+}
+
+locate_path_sdk() {
+  local sdk_family="$1"
+  local requested_version="$2"
+  local executable_path=""
+  local sdk_root=""
+  local dart_output=""
+  local flutter_output=""
+  local machine_dart_version=""
+
+  executable_path="$(command -v "${sdk_family}")" || die "The ${sdk_family} executable was not found on PATH; run 'merry-setup setup' before 'merry-setup bootstrap'."
+  [[ ${executable_path} == /* && -x ${executable_path} ]] || die "The ${sdk_family} executable on PATH is not an absolute executable path: ${executable_path}"
+  if command -v readlink >/dev/null 2>&1; then
+    executable_path="$(readlink -f "${executable_path}")" || die "Failed to resolve the ${sdk_family} executable path: ${executable_path}"
+  fi
+  [[ ${executable_path%/*} == */bin ]] || die "The ${sdk_family} executable is not inside an SDK bin directory: ${executable_path}"
+  sdk_root="$(cd "${executable_path%/*}/.." && pwd -P)" || die "Failed to resolve the ${sdk_family} SDK root for ${executable_path}"
+
+  dart_output="$("${sdk_root}/bin/dart" --version 2>&1)" || die "The located Dart executable failed to report its version: ${sdk_root}/bin/dart"
+  RESOLVED_DART_VERSION="$(extract_first_semver "${dart_output}")" || die "The located Dart executable reported an invalid version."
+  if [[ ${sdk_family} == flutter ]]; then
+    flutter_output="$("${sdk_root}/bin/flutter" --version --machine 2>&1)" || die "The located Flutter executable failed to report its version: ${sdk_root}/bin/flutter"
+    RESOLVED_SDK_VERSION="$(extract_machine_value "${flutter_output}" frameworkVersion)" || die "The located Flutter executable reported an invalid framework version."
+    machine_dart_version="$(extract_machine_value "${flutter_output}" dartSdkVersion)" || die "The located Flutter executable reported an invalid bundled Dart version."
+    RESOLVED_DART_VERSION="$(extract_first_semver "${machine_dart_version}")" || die "The located Flutter executable reported an invalid bundled Dart version."
+  else
+    RESOLVED_SDK_VERSION="${RESOLVED_DART_VERSION}"
+  fi
+
+  require_minimum_dart_runtime "${RESOLVED_DART_VERSION}"
+  if [[ ${requested_version} != stable && ${requested_version} != "${RESOLVED_SDK_VERSION}" ]]; then
+    die "Located ${sdk_family} SDK ${RESOLVED_SDK_VERSION} does not match requested version ${requested_version}."
+  fi
+  sdk_installation_is_valid "${sdk_root}" "${sdk_family}" "${RESOLVED_SDK_VERSION}" "${RESOLVED_DART_VERSION}" || die "Located ${sdk_family} SDK at ${sdk_root} failed validation."
+  CURRENT_SDK_ROOT="${sdk_root}"
+  log_resolved_sdk "${sdk_family}"
+}
+
+lockfile_is_tracked() {
+  local project_dir="$1"
+  local git_output=""
+  local git_status=0
+
+  [[ -f ${project_dir}/pubspec.lock ]] || return 1
+  # Every other prerequisite in this script fails closed, and tracked state is unknowable without git.
+  command -v git >/dev/null 2>&1 || die "git is required to decide the lockfile policy for ${project_dir}/pubspec.lock; install git, or select '--bootstrap none' and run the project's dependency command yourself."
+
+  # LC_ALL=C pins the message this function has to recognize; the status alone cannot separate the two 128 cases.
+  git_output="$(LC_ALL=C git -C "${project_dir}" ls-files --error-unmatch -- pubspec.lock 2>&1)" && git_status=0 || git_status=$?
+
+  case "${git_status}" in
+  0)
+    return 0
+    ;;
+  1)
+    # Documented contract: '--error-unmatch' returns 1 when the path is absent from the index.
+    return 1
+    ;;
+  esac
+
+  # Git located no repository, so the project is simply not version controlled.
+  [[ ${git_output} == *'not a git repository'* ]] && return 1
+
+  die "Failed to determine whether pubspec.lock is tracked in ${project_dir}; refusing to guess the lockfile policy: ${git_output}"
+}
+
+run_project_bootstrap() {
+  local bootstrap_strategy="$1"
+  local project_dir="$2"
+  local tool_path=""
+  local supports_lockfile=false
+  local -a bootstrap_command=()
+
+  [[ ${bootstrap_strategy} != none ]] || return 0
+
+  case "${bootstrap_strategy}" in
+  dart)
+    bootstrap_command=("${CURRENT_SDK_ROOT}/bin/dart" pub get)
+    supports_lockfile=true
+    ;;
+  flutter)
+    bootstrap_command=("${CURRENT_SDK_ROOT}/bin/flutter" pub get)
+    supports_lockfile=true
+    ;;
+  melos)
+    tool_path="${PUB_CACHE}/bin/melos"
+    [[ -x ${tool_path} ]] || die "melos is unavailable at ${tool_path}; run 'merry-setup setup --bootstrap melos' first."
+    bootstrap_command=("${tool_path}" bootstrap)
+    supports_lockfile=true
+    ;;
+  very-good)
+    tool_path="${PUB_CACHE}/bin/very_good"
+    [[ -x ${tool_path} ]] || die "very_good is unavailable at ${tool_path}; run 'merry-setup setup --bootstrap very-good' first."
+    # 'very_good packages get' documents only --recursive and --ignore, so this strategy never reads the lockfile state.
+    bootstrap_command=("${tool_path}" packages get --recursive)
+    ;;
+  esac
+
+  if [[ ${supports_lockfile} == true ]] && lockfile_is_tracked "${project_dir}"; then
+    bootstrap_command+=(--enforce-lockfile)
+  fi
+
+  (cd "${project_dir}" && "${bootstrap_command[@]}") || die "Project bootstrap failed: strategy=${bootstrap_strategy} command=${bootstrap_command[*]}"
+  printf 'Project bootstrap completed: strategy=%s command=%s\n' "${bootstrap_strategy}" "${bootstrap_command[*]}"
 }
 
 main() {
@@ -930,9 +1271,14 @@ main() {
     die "Option '--merry-version' conflicts with '--no-merry'."
   fi
 
+  if [[ ${bootstrap_strategy} == flutter && ${sdk_family} != flutter ]]; then
+    die "Option '--bootstrap flutter' requires '--sdk flutter'."
+  fi
+
   if [[ ${sdk_family} == dart && ${#precache_inputs[@]} -gt 0 ]]; then
     die "Option '--precache' is invalid when '--sdk dart' is selected."
   fi
+  validate_precache_targets "${precache_inputs[@]}"
 
   if [[ ${MERRY_SETUP_HOME+x} == x ]]; then
     managed_home="${MERRY_SETUP_HOME}"
@@ -942,6 +1288,9 @@ main() {
   fi
   validate_absolute_path "MERRY_SETUP_HOME" "${managed_home}"
   export MERRY_SETUP_HOME="${managed_home}"
+  LOCAL_TOOL_BIN="${managed_home}/bin"
+  validate_trunk_path "${trunk_path}"
+  validate_persistence_environment "${persistence_adapter}"
 
   if [[ ${PUB_CACHE+x} == x ]]; then
     validate_absolute_path "PUB_CACHE" "${PUB_CACHE}"
@@ -964,16 +1313,25 @@ main() {
   validate_host
 
   if [[ ${command_name} == bootstrap ]]; then
-    die "Command validation passed, but bootstrap-only execution is not implemented in this development snapshot."
+    # Bootstrap-only excludes SDK and global-tool installation and remote metadata, not persistence:
+    # '--persist-path' is a required option here too, and 'none' is the adapter defined as leaving files alone.
+    locate_path_sdk "${sdk_family}" "${sdk_version}"
+    resolve_pub_cache "${sdk_family}"
+    apply_path_persistence "${persistence_adapter}"
+    run_project_bootstrap "${bootstrap_strategy}" "${resolved_project_dir}"
+    printf 'Merry bootstrap completed: sdk=%s version=%s bootstrap=%s persist=%s\n' "${sdk_family}" "${RESOLVED_SDK_VERSION}" "${bootstrap_strategy}" "${persistence_adapter}"
+    return 0
   fi
 
   resolve_and_install_sdk "${sdk_family}" "${sdk_version}"
   install_flutterfire_bundle "${firebase_tools_version}"
   resolve_pub_cache "${sdk_family}"
   activate_global_packages
-
-  : "${trunk_path}" "${CURRENT_SDK_ROOT}"
-  die "SDK installation completed. Remaining setup steps are not implemented in this development snapshot."
+  run_flutter_precache
+  resolve_trunk_launcher "${resolved_project_dir}"
+  apply_path_persistence "${persistence_adapter}"
+  run_project_bootstrap "${bootstrap_strategy}" "${resolved_project_dir}"
+  printf 'Merry setup completed: sdk=%s version=%s bootstrap=%s persist=%s\n' "${sdk_family}" "${RESOLVED_SDK_VERSION}" "${bootstrap_strategy}" "${persistence_adapter}"
 }
 
 main "$@"

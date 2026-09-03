@@ -39,11 +39,12 @@ One implementation, two thin adapters:
 
 ### CLI flow (`main`)
 
-Parse argv, validate enums and conflicts, resolve `MERRY_SETUP_HOME` (default `$HOME/.merry-setup`), check the project manifest when bootstrap is not `none`, then `validate_bundles`, `build_activation_plan`, `validate_host`, `resolve_and_install_sdk`, `install_flutterfire_bundle`, `resolve_pub_cache`, `activate_global_packages`.
+Parse argv, validate enums, conflicts, the Trunk path, and the persistence environment, resolve `MERRY_SETUP_HOME` (default `$HOME/.merry-setup`), check the project manifest when bootstrap is not `none`, then `validate_bundles`, `build_activation_plan`, `validate_host`, `resolve_and_install_sdk`, `install_flutterfire_bundle`, `resolve_pub_cache`, `activate_global_packages`, `run_flutter_precache`, `resolve_trunk_launcher`, `apply_path_persistence`, `run_project_bootstrap`, and the final `Merry setup completed` line.
 Validation runs entirely before the first network or filesystem mutation, and tests depend on that ordering.
 
-Development-snapshot status: the `bootstrap` command, Flutter precache, Trunk selection, persistence adapters, and project bootstrap are validated but not implemented, and `main` ends with a deliberate `die` after package activation.
-The README "Status" section tracks what is done; update it when a slice lands.
+The `bootstrap` command skips installation: `locate_path_sdk` finds the family on `PATH`, checks the exact version and the runtime floor, then the same pub-cache, persistence, and bootstrap steps run.
+Trunk lookup order is explicit path, `.trunk/bin/trunk`, `tools/trunk`, `trunk` under the project, `MERRY_SETUP_HOME/bin/trunk`, then a download of the official launcher.
+The `github` adapter writes `GITHUB_PATH` lines in reverse precedence because the runner prepends them in reverse; the `bashrc` adapter owns one marker-delimited block.
 
 ### SDK store
 
@@ -64,7 +65,7 @@ The README "Status" section tracks what is done; update it when a slice lands.
 Black-box only: every test drives `bin/merry-setup` through `run_cli` or `run_cli_in` from `test/test_helper.sh` and asserts on exit status, stderr, files, and the recorded command log.
 
 - `setup_test_env` isolates `HOME`, `MERRY_SETUP_HOME`, and `PATH`, and unsets `PUB_CACHE`. `create_recording_stub NAME` places a logging stub on PATH; `assert_command_count` reads the log.
-- SDK tests build richer stubs for `uname`, `curl`, `sha256sum`, `mv`, `tar`, `unzip`, `dart`, `flutter`, and `npm`, and route curl URLs to `test/fixtures/*.json`. Nothing may reach the network or the real home directory.
+- `test_helper.sh` also ships the shared flow stubs (`create_host_stub`, `create_metadata_stub`, `create_dart_sdk`, `create_flutter_sdk`, `write_trunk_launcher_stub`): a pre-created SDK under `MERRY_SETUP_HOME` makes setup reuse it, and the dart stub fakes activation, `pub global list`, and `pub get`. The SDK test builds its own richer `curl`, `sha256sum`, `mv`, `tar`, and `unzip` stubs to exercise download and publication. Nothing may reach the network or the real home directory, and `bootstrap_test.sh` closes `PATH` so a real SDK on the host cannot leak in.
 - Work test-first: add the failing assertion, confirm the failure, implement the smallest passing change. A new validator needs a broken fixture that fails before its passing fixture counts as evidence.
 - `test/run.sh` lists test files explicitly; register new groups there.
 

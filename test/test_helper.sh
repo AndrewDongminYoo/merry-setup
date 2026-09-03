@@ -137,6 +137,191 @@ assert_command_count() {
   [[ ${actual_count} -eq ${expected_count} ]] || fail "expected ${expected_count} ${command_name} calls, received ${actual_count}"
 }
 
+create_host_stub() {
+  local stub_path="${TEST_ROOT}/commands/uname"
+
+  # shellcheck disable=SC2016 # The generated stub expands its runtime arguments.
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'case "${1:-}" in' \
+    '-s) printf '\''Linux\n'\'' ;;' \
+    '-m) printf '\''x86_64\n'\'' ;;' \
+    '*) exit 2 ;;' \
+    'esac' >"${stub_path}"
+  chmod +x "${stub_path}"
+}
+
+create_metadata_stub() {
+  local stub_path="${TEST_ROOT}/commands/curl"
+
+  # shellcheck disable=SC2016 # The generated stub expands its runtime environment.
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'printf '\''COMMAND curl\n'\'' >>"${TEST_COMMAND_LOG}"' \
+    'printf '\''ARG %s\n'\'' "$@" >>"${TEST_COMMAND_LOG}"' \
+    'output_file=""' \
+    'request_url=""' \
+    'while (($# > 0)); do' \
+    '  case "$1" in' \
+    '  --output | --proto | --proto-redir) [[ $1 != --output ]] || output_file="$2"; shift 2 ;;' \
+    '  --fail | --silent | --show-error | --location) shift ;;' \
+    '  *) request_url="$1"; shift ;;' \
+    '  esac' \
+    'done' \
+    '[[ ${request_url} == https://* ]] || exit 2' \
+    'if [[ -n ${CURL_FAIL_PATTERN:-} && ${request_url} == *"${CURL_FAIL_PATTERN}"* ]]; then exit 22; fi' \
+    'case "${request_url}" in' \
+    '*/VERSION) source_file="${DART_VERSION_FIXTURE}" ;;' \
+    '*releases_linux.json) source_file="${FLUTTER_RELEASES_FIXTURE}" ;;' \
+    'https://trunk.io/releases/trunk) source_file="${TRUNK_LAUNCHER_FIXTURE:-}" ;;' \
+    '*) exit 22 ;;' \
+    'esac' \
+    '[[ -f ${source_file} ]] || exit 22' \
+    '/bin/cp "${source_file}" "${output_file}"' >"${stub_path}"
+  chmod +x "${stub_path}"
+}
+
+write_tool_shim_template() {
+  export TOOL_SHIM_TEMPLATE="${TEST_ROOT}/tool-shim-template"
+
+  cat >"${TOOL_SHIM_TEMPLATE}" <<'SHIM'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'CALL %s|%s\n' "${0##*/}" "$*" >>"${TEST_COMMAND_LOG}"
+if [[ ${1:-} == --version ]]; then
+  printf '%s\n' "${DART_TOOL_VERSION:-9.9.9}"
+  exit 0
+fi
+exit "${TOOL_COMMAND_STATUS:-0}"
+SHIM
+  chmod +x "${TOOL_SHIM_TEMPLATE}"
+}
+
+write_dart_stub() {
+  local dart_path="$1"
+  local runtime_version="$2"
+
+  [[ -n ${TOOL_SHIM_TEMPLATE:-} ]] || write_tool_shim_template
+  mkdir -p "$(dirname "${dart_path}")"
+  cat >"${dart_path}" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+readonly runtime_version='${runtime_version}'
+STUB
+  cat >>"${dart_path}" <<'STUB'
+if [[ ${1:-} == --version ]]; then
+  printf 'Dart SDK version: %s (stable) on linux_x64\n' "${runtime_version}" >&2
+  exit 0
+fi
+printf 'CALL dart|%s\n' "$*" >>"${TEST_COMMAND_LOG}"
+if [[ ${1:-} == pub && ${2:-} == global && ${3:-} == activate ]]; then
+  package_name="${4:-}"
+  if [[ ${DART_ACTIVATE_FAIL_PACKAGE:-} == "${package_name}" ]]; then exit 17; fi
+  mkdir -p "${PUB_CACHE}/bin"
+  if [[ -f ${PUB_CACHE}/.global-list ]]; then
+    while IFS= read -r listed_line; do
+      [[ ${listed_line%% *} == "${package_name}" ]] || printf '%s\n' "${listed_line}"
+    done <"${PUB_CACHE}/.global-list" >"${PUB_CACHE}/.global-list.tmp"
+    /bin/mv "${PUB_CACHE}/.global-list.tmp" "${PUB_CACHE}/.global-list"
+  fi
+  printf '%s %s\n' "${package_name}" "${DART_TOOL_VERSION:-9.9.9}" >>"${PUB_CACHE}/.global-list"
+  tool_name=""
+  case "${package_name}" in
+  merry | melos) tool_name="${package_name}" ;;
+  very_good_cli) tool_name=very_good ;;
+  flutterfire_cli) tool_name=flutterfire ;;
+  esac
+  if [[ -n ${tool_name} ]]; then
+    /bin/cp "${TOOL_SHIM_TEMPLATE}" "${PUB_CACHE}/bin/${tool_name}"
+  fi
+  exit 0
+fi
+if [[ ${1:-} == pub && ${2:-} == global && ${3:-} == list ]]; then
+  [[ ! -f ${PUB_CACHE}/.global-list ]] || cat "${PUB_CACHE}/.global-list"
+  exit 0
+fi
+if [[ ${1:-} == pub && ${2:-} == get ]]; then
+  exit "${PUB_GET_STATUS:-0}"
+fi
+exit 2
+STUB
+  chmod +x "${dart_path}"
+}
+
+create_dart_sdk() {
+  local sdk_version="$1"
+  local sdk_root="${MERRY_SETUP_HOME}/sdks/dart/${sdk_version}"
+
+  mkdir -p "${sdk_root}/include"
+  printf 'synthetic Dart embedding API header\n' >"${sdk_root}/include/dart_api.h"
+  write_dart_stub "${sdk_root}/bin/dart" "${sdk_version}"
+}
+
+create_flutter_sdk() {
+  local flutter_version="$1"
+  local dart_version="$2"
+  local sdk_root="${MERRY_SETUP_HOME}/sdks/flutter/${flutter_version}"
+
+  write_dart_stub "${sdk_root}/bin/dart" "${dart_version}"
+  # shellcheck disable=SC2016 # The generated stub expands its runtime environment.
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'if [[ ${1:-} == --version && ${2:-} == --machine ]]; then' \
+    "  printf '%s\\n' '{\"frameworkVersion\":\"${flutter_version}\",\"dartSdkVersion\":\"${dart_version}\"}'" \
+    '  exit 0' \
+    'fi' \
+    'printf '\''CALL flutter|%s\n'\'' "$*" >>"${TEST_COMMAND_LOG}"' \
+    'if [[ ${1:-} == precache ]]; then exit "${FLUTTER_PRECACHE_STATUS:-0}"; fi' \
+    'if [[ ${1:-} == pub && ${2:-} == get ]]; then exit "${PUB_GET_STATUS:-0}"; fi' \
+    'exit 2' >"${sdk_root}/bin/flutter"
+  chmod +x "${sdk_root}/bin/flutter"
+}
+
+write_trunk_launcher_stub() {
+  local launcher_path="$1"
+
+  mkdir -p "$(dirname "${launcher_path}")"
+  # shellcheck disable=SC2016 # The generated stub expands its runtime environment.
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'printf '\''CALL trunk|%s\n'\'' "$*" >>"${TEST_COMMAND_LOG}"' \
+    'if [[ ${1:-} == version ]]; then printf '\''1.25.0\n'\''; exit "${TRUNK_VERSION_STATUS:-0}"; fi' \
+    'exit 2' >"${launcher_path}"
+  chmod +x "${launcher_path}"
+}
+
+assert_log_contains() {
+  local expected_line="$1"
+
+  grep -Fqx -- "${expected_line}" "${TEST_COMMAND_LOG}" || fail "command log did not contain: ${expected_line}; log: $(<"${TEST_COMMAND_LOG}")"
+}
+
+assert_log_excludes() {
+  local unexpected_text="$1"
+
+  if grep -Fq -- "${unexpected_text}" "${TEST_COMMAND_LOG}"; then
+    fail "command log unexpectedly contained: ${unexpected_text}"
+  fi
+}
+
+assert_stdout_contains() {
+  local expected_text="$1"
+
+  grep -Fq -- "${expected_text}" "${TEST_STDOUT}" || fail "stdout did not contain: ${expected_text}; actual: $(<"${TEST_STDOUT}")"
+}
+
+assert_stdout_excludes() {
+  local unexpected_text="$1"
+
+  if grep -Fq -- "${unexpected_text}" "${TEST_STDOUT}"; then
+    fail "stdout unexpectedly contained: ${unexpected_text}"
+  fi
+}
+
 pass() {
   printf 'PASS: %s\n' "$1"
 }
