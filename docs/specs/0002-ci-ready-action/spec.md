@@ -52,6 +52,7 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
 
 6. The composite Action must expose one optional `cache` input.
     The input must accept `true` or `false` and must default to `false`.
+    Any other value must fail before `resolve`, archive restore, `setup`, or archive save.
     Existing consumers must see no change until they opt in.
     When `cache` is `false`, the Action must:
 
@@ -69,20 +70,24 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
 9. A `sdk-version` of `stable` resolves to an exact version only after the CLI reads release metadata.
     The CLI must gain a `resolve` command that accepts every `setup` option exposed by the Action and runs the same pre-mutation validation as `setup`.
     The command must print the resolved plan in a line-oriented `key=value` form.
-    The plan must include the SDK family, the exact SDK version, the official archive SHA-256 checksum, the normalized precache plan, the normalized activation plan, each bundle and its selected tool version, and the bootstrap strategy.
+    The plan must include the SDK family, the exact SDK version, the normalized lowercase official archive SHA-256 checksum, the normalized precache plan, the normalized activation plan, each bundle and its selected tool version, and the bootstrap strategy.
     The command must make no SDK archive or artifact download.
     The command must perform no extraction, no mutation of `MERRY_SETUP_HOME`, and no persistence.
     Release metadata is the only network resource that `resolve` may read.
     `action.yml` must compute the key from this output instead of parsing setup inputs independently.
     If `resolve` fails, the Action must not run a cache restore.
-    The Action must invoke `setup` with the exact version from this output instead of resolving `stable` again.
-10. The `setup` command must accept an optional `--sdk-archive <path>` transport option.
-    The composite Action must use this option for its Action-owned archive path, but it must not expose the path as an Action input.
+    When it uses the archive cache, the Action must invoke `setup` with the exact version and archive checksum from this output instead of resolving `stable` again or recomputing cache identity from later metadata.
+10. The `setup` command must accept optional `--sdk-archive <path>` and `--sdk-archive-sha256 <digest>` transport options.
+    The options must be supplied together.
+    The composite Action must use them for its Action-owned archive path, but it must not expose them as Action inputs.
     The CLI must validate the path before mutation.
     The path must be absolute and must not contain control characters.
     The path must not be a symbolic link, including a dangling symbolic link.
     If the path exists, it must be a regular file.
-    If the path contains an archive restored by the Action, the CLI must obtain the expected checksum from official release metadata and verify the archive before extraction.
+    The digest must contain exactly 64 lowercase hexadecimal characters.
+    The CLI must obtain the expected checksum from official release metadata and compare it with the supplied digest before it uses or creates the archive.
+    A mismatch must fail without an archive download, archive mutation, extraction, execution, SDK publication, or archive save.
+    If the path contains an archive restored by the Action, the CLI must verify the archive against the matching supplied and official checksum before extraction.
     If the path does not exist, the CLI must download the official archive through its existing download path and must verify the official checksum.
     After successful verification, the CLI must place the archive at the requested path so the Action can save it.
     For both sources, the CLI must extract the archive in the initial release's unique sibling staging directory.
@@ -101,7 +106,7 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
     If the final SDK path exists or is a symbolic link, the Action must:
 
     - Skip the archive restore.
-    - Run `setup` with the resolved exact version and without `--sdk-archive`.
+    - Run `setup` with the resolved exact version and without either archive transport option.
     - Skip the archive save.
 
     The CLI must apply the initial release's existing-path acceptance rules to that path.
@@ -110,7 +115,7 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
     If the final SDK path does not exist and is not a symbolic link, the Action must:
 
     - Restore the archive to the Action-owned path.
-    - Run `setup` with the resolved exact version and `--sdk-archive`.
+    - Run `setup` with the resolved exact version, `--sdk-archive`, and `--sdk-archive-sha256` from the same resolved plan.
     - Save the archive in an explicit step immediately after a successful `setup` when no entry matched the exact key.
 
     The Action must not use the cache action's job-level post step for the save.
@@ -119,7 +124,8 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
 13. Remote caching must remain absent from the portable CLI.
     `bin/merry-setup` must contain no remote save, remote restore, cache-key computation, or cache-hit branch.
     The `resolve` command is a read-only query.
-    The `--sdk-archive` option selects local archive bytes and does not identify whether they came from a GitHub cache or another caller.
+    The archive transport options select local archive bytes and bind them to the resolved checksum.
+    They do not identify whether the bytes came from a GitHub cache or another caller.
     The Action owns every remote cache operation.
 14. Third-party cache actions must be pinned to a full commit SHA, as `AGENTS.md` already requires for every Action in a committed workflow.
 
@@ -136,7 +142,7 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
     The CLI can authenticate the archive against official release metadata before it extracts or executes SDK content.
     An extracted tree has no equivalent upstream manifest in the current contract. [review finding, PR #6] [GitHub cache security](https://docs.github.com/en/actions/concepts/workflows-and-actions/dependency-caching#cache-security)
 7. The CLI owns the local archive handoff because it already owns release metadata parsing, checksum verification, extraction, structural validation, and atomic publication.
-    The Action supplies only the local path.
+    The Action supplies only the local path and resolved checksum.
     This boundary keeps security behavior in the portable Bash implementation without adding remote cache operations to it. [review finding, PR #6]
 8. The managed pub cache is not cached in this release.
     It contains extracted hosted packages, activation records, and executable shims.
@@ -146,6 +152,8 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
 9. The Action skips archive restore and save when the final SDK path already exists.
     The CLI reuse path returns before it creates an archive, so an archive save cannot succeed in that branch.
     The CLI remains responsible for deciding whether the existing path is reusable. [review finding, PR #6]
+10. The archive checksum crosses the `resolve`-to-`setup` boundary as explicit data.
+    `setup` compares it with the official metadata it reads before archive use, so changed metadata cannot place different bytes under the earlier cache key. [review finding, PR #6]
 
 ## Testing Strategy
 
@@ -155,6 +163,7 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
 
     - The default `cache: false` flow produces the initial release's setup command log.
     - The default `cache: false` flow runs no cache action.
+    - A value such as `cache: yes` fails before `resolve`, archive restore, `setup`, or archive save, and this failing fixture must run before the valid-value assertions.
     - A change to the resolved SDK version, runner architecture, or official archive checksum produces a different key.
     - A change only to the precache plan, activation plan, bundle plan, bootstrap strategy, project dependency files, persistence adapter, or project directory produces the same key.
     - The requested value `stable` and the exact version it resolves to produce the same key.
@@ -183,12 +192,14 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
     An invalid plan must not reach the restore step.
     The Action must pass the exact version from `resolve` to `setup`.
     A metadata stub whose `stable` answer changes between calls must expose any second channel resolution.
-8. The `--sdk-archive` tests must cover a valid restored archive, a corrupt restored archive, and an absent archive path.
+    A metadata stub whose checksum for the same exact release changes between `resolve` and `setup` must fail before archive use, download, or save.
+8. The `--sdk-archive` and `--sdk-archive-sha256` tests must cover a valid restored archive, a corrupt restored archive, an absent archive path, invalid option combinations, and invalid digest formats.
     A valid restored archive must be checksum-verified before extraction and must not cause an upstream release-archive request.
     An absent archive path must receive the downloaded and verified archive for the explicit save step.
+    Providing only one transport option, or a digest that is not 64 lowercase hexadecimal characters, must fail before metadata access or SDK mutation.
     A relative path, a symbolic link, a directory, and a path with control characters must fail before SDK mutation.
 9. Action tests must cover a pre-existing final SDK path.
-    A valid exact SDK must reach the CLI reuse path without an archive restore, `--sdk-archive`, an upstream release-archive request, or an archive save.
+    A valid exact SDK must reach the CLI reuse path without an archive restore, either archive transport option, an upstream release-archive request, or an archive save.
     An invalid or symbolic-link final path must reach the CLI's deterministic existing-path failure without an archive restore or save.
 
 ## Out of Scope
