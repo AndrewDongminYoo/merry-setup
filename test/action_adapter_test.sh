@@ -32,10 +32,15 @@ export MERRY_SETUP_FIREBASE_TOOLS_VERSION=""
 export MERRY_SETUP_PRECACHE=""
 export MERRY_SETUP_BOOTSTRAP=none
 export MERRY_SETUP_PROJECT_DIR=.
+export MERRY_SETUP_CACHE=false
+export MERRY_SETUP_RESOLVED_SDK_VERSION=""
+export MERRY_SETUP_RESOLVED_SDK_ARCHIVE_SHA256=""
+export MERRY_SETUP_ARCHIVE_PATH=""
+export MERRY_SETUP_SDK_PRESENT=""
 
 run_adapter() {
   set +e
-  "${ADAPTER_PATH}" >"${TEST_STDOUT}" 2>"${TEST_STDERR}"
+  "${ADAPTER_PATH}" "$@" >"${TEST_STDOUT}" 2>"${TEST_STDERR}"
   ACTUAL_STATUS=$?
   set -e
 }
@@ -52,6 +57,55 @@ printf '%s\n' \
   --trunk-path "${TRUNK_PATH}" >"${expected_argv}"
 assert_file_equals "${expected_argv}" "${argv_log}"
 pass "base canonical argv"
+
+export MERRY_SETUP_CACHE=true
+run_adapter resolve
+assert_status 0
+printf '%s\n' \
+  resolve \
+  --sdk dart \
+  --sdk-version stable \
+  --project-dir . \
+  --persist-path github \
+  --bootstrap none \
+  --trunk-path "${TRUNK_PATH}" >"${expected_argv}"
+assert_file_equals "${expected_argv}" "${argv_log}"
+pass "resolve adapter reuses the canonical public Action arguments"
+
+export MERRY_SETUP_RESOLVED_SDK_VERSION=3.12.0
+export MERRY_SETUP_RESOLVED_SDK_ARCHIVE_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+export MERRY_SETUP_ARCHIVE_PATH="${TEST_ROOT}/runner temp/merry-setup/sdk-archive"
+export MERRY_SETUP_SDK_PRESENT=false
+run_adapter setup
+assert_status 0
+printf '%s\n' \
+  setup \
+  --sdk dart \
+  --sdk-version 3.12.0 \
+  --project-dir . \
+  --persist-path github \
+  --bootstrap none \
+  --trunk-path "${TRUNK_PATH}" \
+  --sdk-archive "${MERRY_SETUP_ARCHIVE_PATH}" \
+  --sdk-archive-sha256 "${MERRY_SETUP_RESOLVED_SDK_ARCHIVE_SHA256}" >"${expected_argv}"
+assert_file_equals "${expected_argv}" "${argv_log}"
+pass "cache setup uses the exact resolved version and paired archive transport"
+
+export MERRY_SETUP_SDK_PRESENT=true
+run_adapter setup
+assert_status 0
+printf '%s\n' \
+  setup \
+  --sdk dart \
+  --sdk-version 3.12.0 \
+  --project-dir . \
+  --persist-path github \
+  --bootstrap none \
+  --trunk-path "${TRUNK_PATH}" >"${expected_argv}"
+assert_file_equals "${expected_argv}" "${argv_log}"
+pass "cache setup omits archive transport for a pre-existing SDK path"
+
+export MERRY_SETUP_CACHE=false
 
 export MERRY_SETUP_MERRY=false
 export MERRY_SETUP_MERRY_VERSION='^2.0.0'
@@ -95,6 +149,29 @@ printf '%s\n' \
 assert_file_equals "${expected_argv}" "${argv_log}"
 pass "LF and CRLF multiline inputs remain single argv elements"
 
+export MERRY_SETUP_DART_PACKAGES=""
+export MERRY_SETUP_BUNDLES=""
+export MERRY_SETUP_FIREBASE_TOOLS_VERSION=""
+export MERRY_SETUP_PRECACHE=""
+export MERRY_SETUP_CACHE=yes
+: >"${argv_log}"
+run_adapter setup
+assert_nonzero
+assert_stderr_contains "Input 'cache' must be 'true' or 'false'."
+[[ ! -s ${argv_log} ]] || fail "invalid cache input reached the CLI stub"
+pass "invalid cache input cannot reach setup when preflight is bypassed"
+
+export MERRY_SETUP_CACHE=true
+export MERRY_SETUP_RESOLVED_SDK_VERSION=""
+: >"${argv_log}"
+run_adapter setup
+assert_nonzero
+assert_stderr_contains "Resolved SDK version is unavailable for cache-enabled setup."
+[[ ! -s ${argv_log} ]] || fail "missing resolved version reached the CLI stub"
+pass "cache setup requires the resolved SDK outputs"
+
+export MERRY_SETUP_CACHE=false
+export MERRY_SETUP_RESOLVED_SDK_VERSION=3.12.0
 export MERRY_SETUP_MERRY=TRUE
 : >"${argv_log}"
 run_adapter

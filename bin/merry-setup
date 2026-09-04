@@ -16,6 +16,7 @@ readonly BASHRC_BLOCK_END='# <<< merry-setup managed block <<<'
 ACTIVE_FAMILY_ROOT=""
 ACTIVE_METADATA_FILE=""
 ACTIVE_STAGE_DIR=""
+ACTIVE_ARCHIVE_TEMP=""
 ACTIVE_TRUNK_STAGE=""
 ACTIVE_BASHRC_TEMP=""
 LOCAL_TOOL_BIN=""
@@ -46,6 +47,7 @@ usage() {
   printf '%s\n' \
     'Usage:' \
     '  merry-setup setup --sdk dart|flutter --bootstrap STRATEGY --persist-path ADAPTER [options]' \
+    '  merry-setup resolve --sdk dart|flutter --bootstrap STRATEGY --persist-path ADAPTER [options]' \
     '  merry-setup bootstrap --sdk dart|flutter --bootstrap STRATEGY --persist-path ADAPTER [options]' \
     '' \
     'STRATEGY: none | dart | flutter | melos | very-good' \
@@ -61,6 +63,8 @@ usage() {
     '  --firebase-tools-version <exact>   exact firebase-tools version for the flutterfire bundle' \
     '  --precache <targets>               comma-separated android, web, linux (repeatable; flutter only)' \
     '  --trunk-path <path>                explicit Trunk launcher' \
+    '  --sdk-archive <path>               local SDK archive transport path (setup only)' \
+    '  --sdk-archive-sha256 <digest>      expected official archive SHA-256 (setup only)' \
     '' \
     'Environment: MERRY_SETUP_HOME (default ~/.merry-setup), PUB_CACHE (override), DEBUG=1 (trace)'
 }
@@ -84,6 +88,17 @@ validate_absolute_path() {
   fi
 }
 
+validate_sdk_archive_transport() {
+  local archive_path="$1"
+  local archive_sha256="$2"
+  local checksum_pattern='^[0-9a-f]{64}$'
+
+  [[ ${archive_sha256} =~ ${checksum_pattern} ]] || die "Option '--sdk-archive-sha256' must be exactly 64 lowercase hexadecimal characters."
+  [[ -n ${archive_path} && ${archive_path} == /* && ! ${archive_path} =~ [[:cntrl:]] ]] || die "Option '--sdk-archive' must be an absolute path without control characters."
+  [[ ! -L ${archive_path} ]] || die "Option '--sdk-archive' must not be a symbolic link."
+  [[ ! -e ${archive_path} || -f ${archive_path} ]] || die "Option '--sdk-archive' must be absent or point to a regular file."
+}
+
 validate_host() {
   local host_os
   local host_arch
@@ -97,12 +112,16 @@ validate_host() {
 }
 
 cleanup_sdk_transients() {
-  if [[ -n ${ACTIVE_METADATA_FILE} && -n ${ACTIVE_FAMILY_ROOT} && ${ACTIVE_METADATA_FILE} == "${ACTIVE_FAMILY_ROOT}/.metadata."* ]]; then
+  if [[ -n ${ACTIVE_METADATA_FILE} && ${ACTIVE_METADATA_FILE} == */merry-setup-metadata.* ]]; then
     rm -f -- "${ACTIVE_METADATA_FILE}"
   fi
 
   if [[ -n ${ACTIVE_STAGE_DIR} && -n ${ACTIVE_FAMILY_ROOT} && ${ACTIVE_STAGE_DIR} == "${ACTIVE_FAMILY_ROOT}/."*.staging.* ]]; then
     rm -rf -- "${ACTIVE_STAGE_DIR}"
+  fi
+
+  if [[ -n ${ACTIVE_ARCHIVE_TEMP} && ${ACTIVE_ARCHIVE_TEMP} == *.download.* ]]; then
+    rm -f -- "${ACTIVE_ARCHIVE_TEMP}"
   fi
 
   if [[ -n ${ACTIVE_TRUNK_STAGE} && -n ${LOCAL_TOOL_BIN} && ${ACTIVE_TRUNK_STAGE} == "${LOCAL_TOOL_BIN}/.trunk."* ]]; then
@@ -296,14 +315,17 @@ prepare_family_root() {
   local sdk_family="$1"
 
   ACTIVE_FAMILY_ROOT="${MERRY_SETUP_HOME}/sdks/${sdk_family}"
-  mkdir -p -- "${ACTIVE_FAMILY_ROOT}"
 }
 
 download_release_metadata() {
   local metadata_url="$1"
   local description="$2"
 
-  ACTIVE_METADATA_FILE="$(mktemp "${ACTIVE_FAMILY_ROOT}/.metadata.XXXXXX")"
+  if [[ -n ${ACTIVE_METADATA_FILE} && ${ACTIVE_METADATA_FILE} == */merry-setup-metadata.* ]]; then
+    rm -f -- "${ACTIVE_METADATA_FILE}"
+    ACTIVE_METADATA_FILE=""
+  fi
+  ACTIVE_METADATA_FILE="$(mktemp "${TMPDIR:-/tmp}/merry-setup-metadata.XXXXXX")"
   download_file "${metadata_url}" "${ACTIVE_METADATA_FILE}" "${description}"
 }
 
@@ -327,6 +349,11 @@ resolve_dart_release() {
   RESOLVED_DART_VERSION="${RESOLVED_SDK_VERSION}"
   require_minimum_dart_runtime "${RESOLVED_DART_VERSION}"
   RESOLVED_ARCHIVE_URL="${DART_RELEASE_BASE_URL}/${RESOLVED_SDK_VERSION}/sdk/dartsdk-linux-x64-release.zip"
+}
+
+resolve_dart_archive_checksum() {
+  download_release_metadata "${RESOLVED_ARCHIVE_URL}.sha256sum" "Dart SDK checksum metadata"
+  parse_dart_checksum "${ACTIVE_METADATA_FILE}"
 }
 
 parse_flutter_release_record() {
@@ -514,10 +541,12 @@ verify_archive_checksum() {
 
 install_resolved_sdk() {
   local sdk_family="$1"
+  local sdk_archive="${2:-}"
+  local sdk_archive_sha256="${3:-}"
   local family_label="Dart"
   local final_sdk="${ACTIVE_FAMILY_ROOT}/${RESOLVED_SDK_VERSION}"
   local archive_file=""
-  local checksum_file=""
+  local archive_parent=""
   local extract_root=""
   local staged_sdk=""
   local publish_command_succeeded=false
@@ -533,19 +562,40 @@ install_resolved_sdk() {
     die "Existing ${family_label} SDK installation is invalid: ${final_sdk}. Remove or repair this directory before retrying."
   fi
 
+  if [[ ${sdk_family} == dart && -z ${RESOLVED_ARCHIVE_SHA256} ]]; then
+    resolve_dart_archive_checksum
+  fi
+
+  mkdir -p -- "${ACTIVE_FAMILY_ROOT}"
   ACTIVE_STAGE_DIR="$(mktemp -d "${ACTIVE_FAMILY_ROOT}/.${RESOLVED_SDK_VERSION}.staging.XXXXXX")"
   archive_file="${ACTIVE_STAGE_DIR}/sdk-archive"
   extract_root="${ACTIVE_STAGE_DIR}/extract"
-  mkdir -p -- "${extract_root}"
 
-  if [[ ${sdk_family} == dart ]]; then
-    checksum_file="${ACTIVE_STAGE_DIR}/sdk-archive.sha256sum"
-    download_file "${RESOLVED_ARCHIVE_URL}.sha256sum" "${checksum_file}" "Dart SDK checksum metadata"
-    parse_dart_checksum "${checksum_file}"
+  if [[ -n ${sdk_archive} ]]; then
+    [[ ${sdk_archive_sha256} == "${RESOLVED_ARCHIVE_SHA256}" ]] || die "The supplied SDK archive checksum does not match current official release metadata."
+    if [[ -e ${sdk_archive} || -L ${sdk_archive} ]]; then
+      validate_sdk_archive_transport "${sdk_archive}" "${sdk_archive_sha256}"
+      cp -- "${sdk_archive}" "${archive_file}" || die "Failed to stage the supplied SDK archive."
+      verify_archive_checksum "${archive_file}" "${RESOLVED_ARCHIVE_SHA256}"
+    else
+      archive_parent="${sdk_archive%/*}"
+      [[ -n ${archive_parent} ]] || archive_parent=/
+      mkdir -p -- "${archive_parent}"
+      validate_sdk_archive_transport "${sdk_archive}" "${sdk_archive_sha256}"
+      ACTIVE_ARCHIVE_TEMP="$(mktemp "${sdk_archive}.download.XXXXXX")"
+      download_file "${RESOLVED_ARCHIVE_URL}" "${ACTIVE_ARCHIVE_TEMP}" "${family_label} SDK archive"
+      verify_archive_checksum "${ACTIVE_ARCHIVE_TEMP}" "${RESOLVED_ARCHIVE_SHA256}"
+      cp -- "${ACTIVE_ARCHIVE_TEMP}" "${archive_file}" || die "Failed to stage the downloaded SDK archive."
+      verify_archive_checksum "${archive_file}" "${RESOLVED_ARCHIVE_SHA256}"
+      mv --no-clobber --no-target-directory -- "${ACTIVE_ARCHIVE_TEMP}" "${sdk_archive}" || die "Failed to publish the verified SDK archive at ${sdk_archive}."
+      ACTIVE_ARCHIVE_TEMP=""
+    fi
+  else
+    download_file "${RESOLVED_ARCHIVE_URL}" "${archive_file}" "${family_label} SDK archive"
+    verify_archive_checksum "${archive_file}" "${RESOLVED_ARCHIVE_SHA256}"
   fi
 
-  download_file "${RESOLVED_ARCHIVE_URL}" "${archive_file}" "${family_label} SDK archive"
-  verify_archive_checksum "${archive_file}" "${RESOLVED_ARCHIVE_SHA256}"
+  mkdir -p -- "${extract_root}"
 
   if [[ ${sdk_family} == dart ]]; then
     command -v unzip >/dev/null 2>&1 || die "unzip is required to extract the Dart SDK archive."
@@ -588,6 +638,8 @@ log_resolved_sdk() {
 resolve_and_install_sdk() {
   local sdk_family="$1"
   local requested_version="$2"
+  local sdk_archive="${3:-}"
+  local sdk_archive_sha256="${4:-}"
 
   prepare_family_root "${sdk_family}"
   if [[ ${sdk_family} == dart ]]; then
@@ -595,8 +647,69 @@ resolve_and_install_sdk() {
   else
     resolve_flutter_release "${requested_version}"
   fi
-  install_resolved_sdk "${sdk_family}"
+  install_resolved_sdk "${sdk_family}" "${sdk_archive}" "${sdk_archive_sha256}"
   log_resolved_sdk "${sdk_family}"
+}
+
+print_resolved_plan() {
+  local sdk_family="$1"
+  local bootstrap_strategy="$2"
+  local firebase_tools_version="$3"
+  local package_index=0
+  local plan_index=0
+  local package_constraint=""
+  local plan_entry=""
+  local swap_entry=""
+  local precache_plan=""
+  local -a activation_plan=()
+  local -a precache_targets=()
+  local LC_ALL=C
+
+  [[ ${PRECACHE_ANDROID} == false ]] || precache_targets+=(android)
+  [[ ${PRECACHE_WEB} == false ]] || precache_targets+=(web)
+  [[ ${PRECACHE_LINUX} == false ]] || precache_targets+=(linux)
+  if ((${#precache_targets[@]} == 0)); then
+    precache_plan=none
+  else
+    precache_plan="$(IFS=,; printf '%s' "${precache_targets[*]}")"
+  fi
+
+  for ((package_index = 0; package_index < ${#ACTIVATION_PACKAGE_NAMES[@]}; package_index += 1)); do
+    package_constraint="${ACTIVATION_PACKAGE_CONSTRAINTS[package_index]}"
+    [[ -n ${package_constraint} ]] || package_constraint=latest
+    activation_plan+=("${ACTIVATION_PACKAGE_NAMES[package_index]}@${package_constraint}")
+  done
+  for ((package_index = 1; package_index < ${#activation_plan[@]}; package_index += 1)); do
+    for ((plan_index = package_index; plan_index > 0; plan_index -= 1)); do
+      [[ ${activation_plan[plan_index - 1]} > ${activation_plan[plan_index]} ]] || break
+      swap_entry="${activation_plan[plan_index - 1]}"
+      activation_plan[plan_index - 1]="${activation_plan[plan_index]}"
+      activation_plan[plan_index]="${swap_entry}"
+    done
+  done
+
+  printf 'sdk_family=%s\n' "${sdk_family}"
+  printf 'sdk_version=%s\n' "${RESOLVED_SDK_VERSION}"
+  printf 'sdk_archive_sha256=%s\n' "${RESOLVED_ARCHIVE_SHA256}"
+  printf 'sdk_path=%s\n' "${MERRY_SETUP_HOME}/sdks/${sdk_family}/${RESOLVED_SDK_VERSION}"
+  printf 'precache=%s\n' "${precache_plan}"
+  if ((${#activation_plan[@]} == 0)); then
+    printf 'activation=none\n'
+  else
+    for plan_entry in "${activation_plan[@]}"; do
+      printf 'activation=%s\n' "${plan_entry}"
+    done
+  fi
+  if [[ ${FLUTTERFIRE_BUNDLE_ENABLED} == true ]]; then
+    package_constraint="${ACTIVATION_PACKAGE_CONSTRAINTS[${ACTIVATION_PACKAGE_INDEX[flutterfire_cli]}]}"
+    [[ -n ${package_constraint} ]] || package_constraint=latest
+    printf 'bundle=flutterfire\n'
+    printf 'bundle_flutterfire_cli_version=%s\n' "${package_constraint}"
+    printf 'bundle_firebase_tools_version=%s\n' "${firebase_tools_version:-latest}"
+  else
+    printf 'bundle=none\n'
+  fi
+  printf 'bootstrap=%s\n' "${bootstrap_strategy}"
 }
 
 activation_plan_contains() {
@@ -776,11 +889,18 @@ resolve_trunk_launcher() {
 write_bashrc_block() {
   local sdk_bin="$1"
   local pub_bin="$2"
+  local npm_bin="${3:-}"
   local bashrc_file="${HOME}/.bashrc"
   local bashrc_line=""
   local block_count=0
   local in_block=false
   local malformed_message="${bashrc_file} contains an incomplete, duplicated, or misordered merry-setup managed block; repair it before rerunning."
+  local managed_path=""
+
+  managed_path="$(shell_single_quote "${sdk_bin}"):$(shell_single_quote "${pub_bin}"):$(shell_single_quote "${LOCAL_TOOL_BIN}")"
+  if [[ -n ${npm_bin} ]]; then
+    managed_path+=":$(shell_single_quote "${npm_bin}")"
+  fi
 
   if [[ -L ${bashrc_file} ]]; then
     # Write through a symlinked .bashrc (a dotfiles checkout, for example) to its target so the link survives.
@@ -824,7 +944,7 @@ write_bashrc_block() {
     printf '%s\n' \
       "${BASHRC_BLOCK_BEGIN}" \
       "export PUB_CACHE=$(shell_single_quote "${PUB_CACHE}")" \
-      "export PATH=$(shell_single_quote "${sdk_bin}"):$(shell_single_quote "${pub_bin}"):$(shell_single_quote "${LOCAL_TOOL_BIN}"):\"\${PATH}\"" \
+      "export PATH=${managed_path}:\"\${PATH}\"" \
       "${BASHRC_BLOCK_END}"
   } >"${ACTIVE_BASHRC_TEMP}"
   # The staged copy carries the original mode, and the rename publishes the complete file in one step.
@@ -836,16 +956,19 @@ apply_path_persistence() {
   local persistence_adapter="$1"
   local sdk_bin="${CURRENT_SDK_ROOT}/bin"
   local pub_bin="${PUB_CACHE}/bin"
+  local -a persisted_bins=()
 
   case "${persistence_adapter}" in
   none)
     ;;
   github)
     printf 'PUB_CACHE=%s\n' "${PUB_CACHE}" >>"${GITHUB_ENV}" || die "Failed to write PUB_CACHE to GITHUB_ENV."
-    printf '%s\n' "${LOCAL_TOOL_BIN}" "${pub_bin}" "${sdk_bin}" >>"${GITHUB_PATH}" || die "Failed to write PATH entries to GITHUB_PATH."
+    [[ -z ${NPM_GLOBAL_BIN} ]] || persisted_bins+=("${NPM_GLOBAL_BIN}")
+    persisted_bins+=("${LOCAL_TOOL_BIN}" "${pub_bin}" "${sdk_bin}")
+    printf '%s\n' "${persisted_bins[@]}" >>"${GITHUB_PATH}" || die "Failed to write PATH entries to GITHUB_PATH."
     ;;
   bashrc)
-    write_bashrc_block "${sdk_bin}" "${pub_bin}"
+    write_bashrc_block "${sdk_bin}" "${pub_bin}" "${NPM_GLOBAL_BIN}"
     ;;
   esac
 
@@ -1158,6 +1281,10 @@ main() {
   local merry_version_provided=false
   local firebase_tools_version=""
   local trunk_path=""
+  local sdk_archive=""
+  local sdk_archive_sha256=""
+  local sdk_archive_provided=false
+  local sdk_archive_sha256_provided=false
   local managed_home=""
   local option_name=""
   local option_value=""
@@ -1171,7 +1298,7 @@ main() {
   shift
 
   case "${command_name}" in
-  setup | bootstrap)
+  setup | resolve | bootstrap)
     ;;
   help | -h | --help)
     usage
@@ -1190,7 +1317,7 @@ main() {
       merry_enabled="false"
       shift
       ;;
-    --sdk | --sdk-version | --bootstrap | --persist-path | --project-dir | --merry-version | --dart-package | --bundle | --firebase-tools-version | --precache | --trunk-path)
+    --sdk | --sdk-version | --bootstrap | --persist-path | --project-dir | --merry-version | --dart-package | --bundle | --firebase-tools-version | --precache | --trunk-path | --sdk-archive | --sdk-archive-sha256)
       require_option_value "${option_name}" "$#" "${2-}"
       option_value="$2"
 
@@ -1229,6 +1356,14 @@ main() {
       --trunk-path)
         trunk_path="${option_value}"
         ;;
+      --sdk-archive)
+        sdk_archive="${option_value}"
+        sdk_archive_provided=true
+        ;;
+      --sdk-archive-sha256)
+        sdk_archive_sha256="${option_value}"
+        sdk_archive_sha256_provided=true
+        ;;
       esac
 
       shift 2
@@ -1242,6 +1377,16 @@ main() {
   [[ -n ${sdk_family} ]] || die "Option '--sdk' is required."
   [[ -n ${bootstrap_strategy} ]] || die "Option '--bootstrap' is required."
   [[ -n ${persistence_adapter} ]] || die "Option '--persist-path' is required."
+
+  if [[ ${sdk_archive_provided} != "${sdk_archive_sha256_provided}" ]]; then
+    die "Options '--sdk-archive' and '--sdk-archive-sha256' must be provided together."
+  fi
+  if [[ ${sdk_archive_provided} == true && ${command_name} != setup ]]; then
+    die "Options '--sdk-archive' and '--sdk-archive-sha256' are valid only with 'setup'."
+  fi
+  if [[ ${sdk_archive_provided} == true ]]; then
+    validate_sdk_archive_transport "${sdk_archive}" "${sdk_archive_sha256}"
+  fi
 
   case "${sdk_family}" in
   dart | flutter)
@@ -1312,6 +1457,18 @@ main() {
   build_activation_plan "${merry_enabled}" "${merry_version}" "${merry_version_provided}" "${bootstrap_strategy}" "${dart_packages[@]}"
   validate_host
 
+  if [[ ${command_name} == resolve ]]; then
+    prepare_family_root "${sdk_family}"
+    if [[ ${sdk_family} == dart ]]; then
+      resolve_dart_release "${sdk_version}"
+      resolve_dart_archive_checksum
+    else
+      resolve_flutter_release "${sdk_version}"
+    fi
+    print_resolved_plan "${sdk_family}" "${bootstrap_strategy}" "${firebase_tools_version}"
+    return 0
+  fi
+
   if [[ ${command_name} == bootstrap ]]; then
     # Bootstrap-only excludes SDK and global-tool installation and remote metadata, not persistence:
     # '--persist-path' is a required option here too, and 'none' is the adapter defined as leaving files alone.
@@ -1323,7 +1480,7 @@ main() {
     return 0
   fi
 
-  resolve_and_install_sdk "${sdk_family}" "${sdk_version}"
+  resolve_and_install_sdk "${sdk_family}" "${sdk_version}" "${sdk_archive}" "${sdk_archive_sha256}"
   install_flutterfire_bundle "${firebase_tools_version}"
   resolve_pub_cache "${sdk_family}"
   activate_global_packages

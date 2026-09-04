@@ -45,6 +45,9 @@ if [[ -z ${MERRY_SETUP_TEST_CASE:-} ]]; then
     flutterfire_uses_validated_npm
     invalid_npm_prefix
     flutterfire_precedes_activated_node
+    bundle_free_persistence_omits_npm
+    flutterfire_github_persists_npm_bin
+    flutterfire_bashrc_persists_npm_bin
     missing_npm
     failed_npm_install
     failed_activation_preserves_cache
@@ -658,6 +661,45 @@ case_flutterfire_precedes_activated_node() {
   assert_log_excludes 'CALL node|'
   assert_stdout_contains 'Firebase Tools version: 15.0.0'
   pass "FlutterFire npm runs before activated tools change PATH"
+}
+
+case_bundle_free_persistence_omits_npm() {
+  prepare_flutter_case
+  export GITHUB_ENV="${TEST_ROOT}/github-env"
+  export GITHUB_PATH="${TEST_ROOT}/github-path"
+  : >"${GITHUB_ENV}"
+  : >"${GITHUB_PATH}"
+  run_cli setup --sdk flutter --sdk-version 3.44.0 --bootstrap none --persist-path github --project-dir "${TEST_ROOT}/project" --trunk-path "${TEST_ROOT}/launchers/trunk" --no-merry
+  assert_status 0
+  printf '%s\n' "${MERRY_SETUP_HOME}/bin" "${MERRY_SETUP_HOME}/pub-cache/flutter/3.44.0/bin" "${MERRY_SETUP_HOME}/sdks/flutter/3.44.0/bin" >"${TEST_ROOT}/expected-github-path"
+  assert_file_equals "${TEST_ROOT}/expected-github-path" "${GITHUB_PATH}"
+  assert_log_excludes 'CALL npm|'
+  pass "bundle-free persistence keeps the v1 path set and never queries npm"
+}
+
+case_flutterfire_github_persists_npm_bin() {
+  prepare_flutter_case
+  export GITHUB_ENV="${TEST_ROOT}/github-env"
+  export GITHUB_PATH="${TEST_ROOT}/github-path"
+  : >"${GITHUB_ENV}"
+  : >"${GITHUB_PATH}"
+  run_cli setup --sdk flutter --sdk-version 3.44.0 --bootstrap none --persist-path github --project-dir "${TEST_ROOT}/project" --trunk-path "${TEST_ROOT}/launchers/trunk" --bundle flutterfire --no-merry
+  assert_status 0
+  printf '%s\n' "${NPM_GLOBAL_PREFIX}/bin" "${MERRY_SETUP_HOME}/bin" "${MERRY_SETUP_HOME}/pub-cache/flutter/3.44.0/bin" "${MERRY_SETUP_HOME}/sdks/flutter/3.44.0/bin" >"${TEST_ROOT}/expected-github-path"
+  assert_file_equals "${TEST_ROOT}/expected-github-path" "${GITHUB_PATH}"
+  pass "FlutterFire persists the npm global bin through the GitHub adapter"
+}
+
+case_flutterfire_bashrc_persists_npm_bin() {
+  prepare_flutter_case
+  run_cli setup --sdk flutter --sdk-version 3.44.0 --bootstrap none --persist-path bashrc --project-dir "${TEST_ROOT}/project" --trunk-path "${TEST_ROOT}/launchers/trunk" --bundle flutterfire --no-merry
+  assert_status 0
+  # shellcheck disable=SC2016 # The inner shell expands the sourced values.
+  resolved_path="$(env -i HOME="${HOME}" PATH=/usr/bin:/bin /usr/bin/env bash -c 'source "${HOME}/.bashrc"; printf "%s\n" "${PATH}"')"
+  printf '%s\n' "${MERRY_SETUP_HOME}/sdks/flutter/3.44.0/bin:${MERRY_SETUP_HOME}/pub-cache/flutter/3.44.0/bin:${MERRY_SETUP_HOME}/bin:${NPM_GLOBAL_PREFIX}/bin:/usr/bin:/bin" >"${TEST_ROOT}/expected-bashrc-path"
+  printf '%s\n' "${resolved_path}" >"${TEST_ROOT}/actual-bashrc-path"
+  assert_file_equals "${TEST_ROOT}/expected-bashrc-path" "${TEST_ROOT}/actual-bashrc-path"
+  pass "FlutterFire persists the npm global bin through the bashrc adapter"
 }
 
 case_missing_npm() {

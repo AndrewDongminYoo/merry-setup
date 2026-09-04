@@ -65,6 +65,7 @@ create_sdk_stubs() {
     'done' \
     '[[ -n ${output_file} && ${request_url} == https://* ]] || exit 2' \
     'if [[ -n ${CURL_FAIL_PATTERN:-} && ${request_url} == *"${CURL_FAIL_PATTERN}"* ]]; then exit 22; fi' \
+    'if [[ -n ${CURL_FAIL_EXACT:-} && ${request_url} == "${CURL_FAIL_EXACT}" ]]; then exit 22; fi' \
     'case "${request_url}" in' \
     '*/VERSION) source_file="${DART_VERSION_FIXTURE}" ;;' \
     '*.sha256sum) source_file="${DART_CHECKSUM_FIXTURE}" ;;' \
@@ -84,6 +85,7 @@ create_sdk_stubs() {
     'set -euo pipefail' \
     'printf '\''COMMAND sha256sum\n'\'' >>"${TEST_COMMAND_LOG}"' \
     'printf '\''ARG %s\n'\'' "$@" >>"${TEST_COMMAND_LOG}"' \
+    'if [[ -n ${ARCHIVE_SWAP_SOURCE:-} && -n ${ARCHIVE_SWAP_TARGET:-} ]]; then /bin/cp "${ARCHIVE_SWAP_SOURCE}" "${ARCHIVE_SWAP_TARGET}"; fi' \
     'printf '\''%s  %s\n'\'' "${ARCHIVE_ACTUAL_SHA256}" "$1"' >"${stub_path}"
   chmod +x "${stub_path}"
 
@@ -95,6 +97,7 @@ create_sdk_stubs() {
     'printf '\''COMMAND unzip\n'\'' >>"${TEST_COMMAND_LOG}"' \
     'printf '\''ARG %s\n'\'' "$@" >>"${TEST_COMMAND_LOG}"' \
     '[[ ${EXTRACT_FAIL:-0} != 1 ]] || exit 9' \
+    'if [[ -n ${FORBIDDEN_ARCHIVE_CONTENT:-} ]] && grep -Fqx -- "${FORBIDDEN_ARCHIVE_CONTENT}" "$2"; then exit 10; fi' \
     'extract_root=""' \
     'while (($# > 0)); do' \
     '  case "$1" in' \
@@ -179,7 +182,7 @@ reset_case() {
   export STAGED_FLUTTER_VERSION=3.44.0
   export TEST_UNAME_S=Linux
   export TEST_UNAME_M=x86_64
-  unset CURL_FAIL_PATTERN EXTRACT_FAIL PUBLISH_RACE PUBLISH_RACE_TARGET RACE_FAMILY RACE_VERSION RACE_DART_VERSION RACE_MV_STATUS RACE_SYMLINK_TARGET STAGED_DART_AS_FLUTTER || true
+  unset ARCHIVE_SWAP_SOURCE ARCHIVE_SWAP_TARGET CURL_FAIL_PATTERN CURL_FAIL_EXACT EXTRACT_FAIL FORBIDDEN_ARCHIVE_CONTENT PUBLISH_RACE PUBLISH_RACE_TARGET RACE_FAMILY RACE_VERSION RACE_DART_VERSION RACE_MV_STATUS RACE_SYMLINK_TARGET STAGED_DART_AS_FLUTTER || true
 }
 
 run_setup() {
@@ -187,6 +190,13 @@ run_setup() {
   local sdk_version="$2"
 
   run_cli setup --sdk "${sdk_family}" --sdk-version "${sdk_version}" --bootstrap none --persist-path none --no-merry --trunk-path "${TEST_ROOT}/launchers/trunk"
+}
+
+run_transport_setup() {
+  local archive_path="$1"
+  local archive_sha256="$2"
+
+  run_cli setup --sdk dart --sdk-version 3.12.0 --bootstrap none --persist-path none --no-merry --trunk-path "${TEST_ROOT}/launchers/trunk" --sdk-archive "${archive_path}" --sdk-archive-sha256 "${archive_sha256}"
 }
 
 assert_archive_download_count() {
@@ -233,6 +243,161 @@ assert_nonzero
 assert_stderr_contains "Unsupported architecture: arm64."
 assert_command_count 0 curl
 pass "unsupported architecture fails before metadata lookup"
+
+reset_case
+run_cli setup --sdk dart --sdk-version 3.12.0 --bootstrap none --persist-path none --no-merry --sdk-archive "${TEST_ROOT}/action-cache/sdk-archive"
+assert_nonzero
+assert_stderr_contains "Options '--sdk-archive' and '--sdk-archive-sha256' must be provided together."
+assert_command_count 0 curl
+assert_path_absent "${MERRY_SETUP_HOME}"
+pass "archive transport options must be provided together"
+
+reset_case
+run_cli setup --sdk dart --sdk-version 3.12.0 --bootstrap none --persist-path none --no-merry --sdk-archive-sha256 "${DART_ARCHIVE_SHA256}"
+assert_nonzero
+assert_stderr_contains "Options '--sdk-archive' and '--sdk-archive-sha256' must be provided together."
+assert_command_count 0 curl
+assert_path_absent "${MERRY_SETUP_HOME}"
+pass "archive checksum cannot be provided without its transport path"
+
+reset_case
+run_cli resolve --sdk dart --sdk-version 3.12.0 --bootstrap none --persist-path none --no-merry --sdk-archive "${TEST_ROOT}/action-cache/sdk-archive" --sdk-archive-sha256 "${DART_ARCHIVE_SHA256}"
+assert_nonzero
+assert_stderr_contains "Options '--sdk-archive' and '--sdk-archive-sha256' are valid only with 'setup'."
+assert_command_count 0 curl
+assert_path_absent "${MERRY_SETUP_HOME}"
+pass "archive transport options are setup-only"
+
+reset_case
+run_transport_setup "${TEST_ROOT}/action-cache/sdk-archive" AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+assert_nonzero
+assert_stderr_contains "Option '--sdk-archive-sha256' must be exactly 64 lowercase hexadecimal characters."
+assert_command_count 0 curl
+assert_path_absent "${MERRY_SETUP_HOME}"
+pass "archive transport rejects a non-lowercase digest before metadata lookup"
+
+reset_case
+run_transport_setup relative/sdk-archive "${DART_ARCHIVE_SHA256}"
+assert_nonzero
+assert_stderr_contains "Option '--sdk-archive' must be an absolute path without control characters."
+assert_command_count 0 curl
+assert_path_absent "${MERRY_SETUP_HOME}"
+pass "archive transport rejects a relative path before metadata lookup"
+
+reset_case
+run_transport_setup "${TEST_ROOT}/action-cache/sdk-archive"$'\ninvalid' "${DART_ARCHIVE_SHA256}"
+assert_nonzero
+assert_stderr_contains "Option '--sdk-archive' must be an absolute path without control characters."
+assert_command_count 0 curl
+assert_path_absent "${MERRY_SETUP_HOME}"
+pass "archive transport rejects control characters before metadata lookup"
+
+reset_case
+mkdir -p "${TEST_ROOT}/archive-directory"
+run_transport_setup "${TEST_ROOT}/archive-directory" "${DART_ARCHIVE_SHA256}"
+assert_nonzero
+assert_stderr_contains "Option '--sdk-archive' must be absent or point to a regular file."
+assert_command_count 0 curl
+assert_path_absent "${MERRY_SETUP_HOME}"
+pass "archive transport rejects a directory before metadata lookup"
+
+reset_case
+printf 'target\n' >"${TEST_ROOT}/archive-target"
+ln -s "${TEST_ROOT}/archive-target" "${TEST_ROOT}/archive-link"
+run_transport_setup "${TEST_ROOT}/archive-link" "${DART_ARCHIVE_SHA256}"
+assert_nonzero
+assert_stderr_contains "Option '--sdk-archive' must not be a symbolic link."
+assert_command_count 0 curl
+assert_path_absent "${MERRY_SETUP_HOME}"
+pass "archive transport rejects a symbolic link before metadata lookup"
+
+reset_case
+ln -s "${TEST_ROOT}/missing-archive-target" "${TEST_ROOT}/dangling-archive-link"
+run_transport_setup "${TEST_ROOT}/dangling-archive-link" "${DART_ARCHIVE_SHA256}"
+assert_nonzero
+assert_stderr_contains "Option '--sdk-archive' must not be a symbolic link."
+assert_command_count 0 curl
+assert_path_absent "${MERRY_SETUP_HOME}"
+pass "archive transport rejects a dangling symbolic link before metadata lookup"
+
+reset_case
+mkdir -p "${TEST_ROOT}/action-cache"
+printf 'trusted restored archive\n' >"${TEST_ROOT}/action-cache/sdk-archive"
+printf 'swapped untrusted archive\n' >"${TEST_ROOT}/swapped-sdk-archive"
+export ARCHIVE_SWAP_SOURCE="${TEST_ROOT}/swapped-sdk-archive"
+export ARCHIVE_SWAP_TARGET="${TEST_ROOT}/action-cache/sdk-archive"
+export FORBIDDEN_ARCHIVE_CONTENT='swapped untrusted archive'
+run_transport_setup "${TEST_ROOT}/action-cache/sdk-archive" "${DART_ARCHIVE_SHA256}"
+assert_status 0
+assert_archive_download_count 0
+assert_path_exists "${MERRY_SETUP_HOME}/sdks/dart/3.12.0/bin/dart"
+grep -Fqx 'swapped untrusted archive' "${TEST_ROOT}/action-cache/sdk-archive" || fail "archive swap canary did not replace the caller-owned path"
+if grep -Fqx "ARG ${TEST_ROOT}/action-cache/sdk-archive" "${TEST_COMMAND_LOG}"; then fail "checksum or extraction reopened the caller-owned archive path"; fi
+pass "restored archive bytes are snapshotted before verification and extraction"
+
+reset_case
+mkdir -p "${TEST_ROOT}/action-cache"
+printf 'restored archive\n' >"${TEST_ROOT}/action-cache/sdk-archive"
+run_transport_setup "${TEST_ROOT}/action-cache/sdk-archive" "${DART_ARCHIVE_SHA256}"
+assert_status 0
+assert_archive_download_count 0
+assert_command_count 1 sha256sum
+grep -Eq '^ARG .*/sdks/dart/\.3\.12\.0\.staging\.[^/]+/sdk-archive$' "${TEST_COMMAND_LOG}" || fail "restored Dart archive was not verified and extracted from private staging"
+assert_path_exists "${MERRY_SETUP_HOME}/sdks/dart/3.12.0/bin/dart"
+pass "a valid restored archive is verified from private staging without an upstream archive request"
+
+reset_case
+printf 'corrupt restored archive\n' >"${TEST_ROOT}/action-cache/corrupt-sdk-archive"
+export ARCHIVE_ACTUAL_SHA256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+run_transport_setup "${TEST_ROOT}/action-cache/corrupt-sdk-archive" "${DART_ARCHIVE_SHA256}"
+assert_nonzero
+assert_stderr_contains "SDK archive checksum mismatch."
+assert_archive_download_count 0
+assert_command_count 0 unzip
+assert_path_absent "${MERRY_SETUP_HOME}/sdks/dart/3.12.0"
+grep -Fqx 'corrupt restored archive' "${TEST_ROOT}/action-cache/corrupt-sdk-archive" || fail "corrupt restored archive was modified"
+pass "a corrupt restored archive fails before extraction without an upstream fallback"
+
+reset_case
+printf '%s *dartsdk-linux-x64-release.zip\n' bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb >"${TEST_ROOT}/changed-dart.sha256sum"
+export DART_CHECKSUM_FIXTURE="${TEST_ROOT}/changed-dart.sha256sum"
+printf 'restored archive\n' >"${TEST_ROOT}/action-cache/drifted-sdk-archive"
+run_transport_setup "${TEST_ROOT}/action-cache/drifted-sdk-archive" "${DART_ARCHIVE_SHA256}"
+assert_nonzero
+assert_stderr_contains "The supplied SDK archive checksum does not match current official release metadata."
+assert_archive_download_count 0
+assert_command_count 0 sha256sum
+assert_command_count 0 unzip
+assert_path_absent "${MERRY_SETUP_HOME}/sdks/dart/3.12.0"
+pass "changed official metadata rejects the earlier checksum before archive access"
+
+reset_case
+run_transport_setup "${TEST_ROOT}/action-cache/cold/sdk-archive" "${DART_ARCHIVE_SHA256}"
+assert_status 0
+assert_archive_download_count 1
+assert_path_exists "${TEST_ROOT}/action-cache/cold/sdk-archive"
+assert_path_exists "${MERRY_SETUP_HOME}/sdks/dart/3.12.0/bin/dart"
+[[ -z $(find "${TEST_ROOT}/action-cache/cold" -name '*.download.*' -print) ]] || fail "archive download temporary files remain"
+pass "a cold transport download publishes a verified archive for an explicit save step"
+
+reset_case
+export CURL_FAIL_EXACT=https://storage.googleapis.com/dart-archive/channels/stable/release/3.12.0/sdk/dartsdk-linux-x64-release.zip
+run_transport_setup "${TEST_ROOT}/action-cache/failed/sdk-archive" "${DART_ARCHIVE_SHA256}"
+assert_nonzero
+assert_stderr_contains "Failed to download Dart SDK archive"
+assert_path_absent "${TEST_ROOT}/action-cache/failed/sdk-archive"
+assert_path_absent "${MERRY_SETUP_HOME}/sdks/dart/3.12.0"
+[[ -z $(find "${TEST_ROOT}/action-cache/failed" -name '*.download.*' -print) ]] || fail "failed archive download left temporary files"
+pass "a failed cold transport download leaves no archive or SDK"
+
+reset_case
+create_dart_sdk 3.12.0
+run_transport_setup "${TEST_ROOT}/action-cache/reused/sdk-archive" "${DART_ARCHIVE_SHA256}"
+assert_status 0
+assert_command_count 0 curl
+assert_path_absent "${TEST_ROOT}/action-cache/reused/sdk-archive"
+assert_stdout_contains "Reusing Dart SDK 3.12.0"
+pass "a reused SDK does not require or create an archive transport path"
 
 reset_case
 printf '%s\n' \
@@ -524,3 +689,15 @@ assert_stderr_contains "Staged Flutter SDK does not match release metadata."
 assert_path_absent "${MERRY_SETUP_HOME}/sdks/flutter/3.44.0"
 assert_no_staging_paths "${MERRY_SETUP_HOME}/sdks/flutter"
 pass "staged Flutter version mismatch blocks publication"
+
+reset_case
+mkdir -p "${TEST_ROOT}/action-cache/flutter"
+printf 'restored Flutter archive\n' >"${TEST_ROOT}/action-cache/flutter/sdk-archive"
+export ARCHIVE_ACTUAL_SHA256="${FLUTTER_ARCHIVE_SHA256}"
+run_cli setup --sdk flutter --sdk-version 3.44.0 --bootstrap none --persist-path none --no-merry --trunk-path "${TEST_ROOT}/launchers/trunk" --sdk-archive "${TEST_ROOT}/action-cache/flutter/sdk-archive" --sdk-archive-sha256 "${FLUTTER_ARCHIVE_SHA256}"
+assert_status 0
+assert_archive_download_count 0
+assert_command_count 1 sha256sum
+grep -Eq '^ARG .*/sdks/flutter/\.3\.44\.0\.staging\.[^/]+/sdk-archive$' "${TEST_COMMAND_LOG}" || fail "restored Flutter archive was not verified and extracted from private staging"
+assert_path_exists "${MERRY_SETUP_HOME}/sdks/flutter/3.44.0/bin/flutter"
+pass "Flutter setup verifies and installs a restored archive without an upstream archive request"
