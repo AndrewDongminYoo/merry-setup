@@ -95,7 +95,20 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
     A hit skips only the SDK release archive download from the upstream distribution.
 12. When `cache` is `true`, the Action must perform these steps:
 
-    - Run `resolve` and compute the exact archive key.
+    - Run `resolve` and compute the exact archive key and final SDK path.
+    - Check the final SDK path without modifying it.
+
+    If the final SDK path exists or is a symbolic link, the Action must:
+
+    - Skip the archive restore.
+    - Run `setup` with the resolved exact version and without `--sdk-archive`.
+    - Skip the archive save.
+
+    The CLI must apply the initial release's existing-path acceptance rules to that path.
+    The Action must not duplicate the CLI validation.
+
+    If the final SDK path does not exist and is not a symbolic link, the Action must:
+
     - Restore the archive to the Action-owned path.
     - Run `setup` with the resolved exact version and `--sdk-archive`.
     - Save the archive in an explicit step immediately after a successful `setup` when no entry matched the exact key.
@@ -130,6 +143,9 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
     Pub compares the expected hosted-package checksum with a checksum record stored inside the same cache before it reuses the extracted package directory.
     This Spec has no independent provenance check for those restored directories.
     A later Spec must solve that boundary before the Action may cache `PUB_CACHE`. [local adversarial review, PR #6] [Pub hosted-cache verification](https://github.com/dart-lang/pub/blob/51d9e82d3931536ad629a7430314ac34413c30c4/lib/src/source/hosted.dart#L1247-L1372) [Pub global-package state](https://github.com/dart-lang/pub/blob/51d9e82d3931536ad629a7430314ac34413c30c4/lib/src/global_packages.dart#L38-L72)
+9. The Action skips archive restore and save when the final SDK path already exists.
+    The CLI reuse path returns before it creates an archive, so an archive save cannot succeed in that branch.
+    The CLI remains responsible for deciding whether the existing path is reusable. [review finding, PR #6]
 
 ## Testing Strategy
 
@@ -171,6 +187,9 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
     A valid restored archive must be checksum-verified before extraction and must not cause an upstream release-archive request.
     An absent archive path must receive the downloaded and verified archive for the explicit save step.
     A relative path, a symbolic link, a directory, and a path with control characters must fail before SDK mutation.
+9. Action tests must cover a pre-existing final SDK path.
+    A valid exact SDK must reach the CLI reuse path without an archive restore, `--sdk-archive`, an upstream release-archive request, or an archive save.
+    An invalid or symbolic-link final path must reach the CLI's deterministic existing-path failure without an archive restore or save.
 
 ## Out of Scope
 
