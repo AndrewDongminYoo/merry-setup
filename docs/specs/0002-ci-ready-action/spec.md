@@ -27,13 +27,15 @@ The integration workflow measured that cost: its Flutter job takes minutes domin
 Extend the composite Action so a consumer repository can replace its per-workflow toolchain setup with one step.
 
 Persist the npm global bin directory when, and only when, a bundle has put an executable there.
-Add opt-in caching of the version-addressed SDK store and the managed pub cache, keyed on the values that already determine their contents.
-Both changes stay inside the existing contract shape: no new mutable state, no relocation of tooling the initial release declared out of bounds, and no behaviour that differs between a cache hit and a cold run.
+Add opt-in caching of the upstream SDK release archive.
+On every cache hit, the CLI must verify that archive against the checksum from official release metadata before it extracts or executes SDK content.
+The Action must not cache an extracted SDK tree or the managed pub cache in this release.
+Both changes stay inside the existing contract shape: no relocation of tooling the initial release declared out of bounds, and no installed state that differs between a cache hit and a cold run.
 
 ## User Stories
 
 1. As a repository owner, I replace a workflow's Flutter installation, tool activation and dependency bootstrap with one `merry-setup` step, and a later step can run every tool the step installed.
-2. As a repository owner, I enable caching with one input and see repeat runs skip the SDK download while producing the same installed tree as a cold run.
+2. As a repository owner, I enable caching with one input and see repeat runs skip the SDK release archive download while producing the same installed tree as a cold run.
 3. As a reviewer, I can tell from the workflow file alone which SDK version and which tools a job will use.
 
 ## Requirements
@@ -46,54 +48,145 @@ Both changes stay inside the existing contract shape: no new mutable state, no r
 4. `merry-setup` must still not relocate the npm global prefix; it reads the prefix `npm prefix --global` reports and persists the bin directory derived from it, `<prefix>/bin`, which is the directory the bundle installation already uses to locate the executable, never the prefix itself, because a prefix such as `/usr/local` on `PATH` exposes nothing. This narrows requirement 27 rather than reversing it: the prefix stays npm's to choose, and only the visibility of its bin directory to later steps becomes `merry-setup`'s concern.
 5. Requirements 64 and 65 must be amended to describe a persisted set that is conditional on the bundle, so the enumeration remains exhaustive rather than being contradicted by behaviour.
 
-### SDK and Pub Cache Caching
+### SDK Release Archive Caching
 
-6. The composite Action must expose one optional `cache` input accepting `true` or `false`, defaulting to `false`, so existing consumers see no change until they opt in.
-7. When `cache` is `true`, the Action must maintain two separate entries: an SDK entry for the store at `${MERRY_SETUP_HOME}/sdks/<family>/<version>`, and a pub entry for the managed pub cache at `${MERRY_SETUP_HOME}/pub-cache/<family>/<version>`. They are separate because their contents change on different inputs: the SDK tree changes only with the SDK selection, while the pub cache also receives every global activation and, when bootstrap is not `none`, the project's own dependencies, because `run_project_bootstrap` runs after `resolve_pub_cache` and downloads into the same managed cache. When `PUB_CACHE` is set in the Action's environment, the CLI honours that override under requirement 43 of the initial release and the managed path receives nothing, so the Action must skip the pub entry entirely, restore and save alike, and log that the caller-managed cache was left to the caller; it must not cache the override path, because a directory the caller chose is the caller's to cache.
-8. The SDK entry's key must contain the SDK family, the exact resolved SDK version, the runner operating system and architecture, and the normalized Flutter precache plan, sorted and deduplicated, because those are the inputs that determine the stored tree. The precache plan belongs in the key because `flutter precache` writes its platform artifacts under the installed SDK's `bin/cache`, inside the path the entry saves, so two jobs that request different targets would otherwise share an entry and restore whichever set the first writer saved. The SDK entry must have no fallback key, because a tree for another version or another target set is not usable. The pub entry's key must contain everything in the SDK key, a digest of the complete plan `resolve` prints under requirement 9, which carries the activation plan, the bundles and the bootstrap strategy, so that any input that changes what the CLI downloads into the pub cache changes the key without being enumerated here one at a time, and, when bootstrap is not `none`, a digest over every dependency-resolution input pub reads under the project directory: all `pubspec.yaml`, `pubspec_overrides.yaml` and `pubspec.lock` files, because each of them can change which project dependencies the bootstrap step downloads, and omitting any one of them leaves a stale entry restored under an unchanged key. The digest covers files under the project directory only and never follows a path dependency outside it: those manifests are open-ended, and the Action cannot enumerate them without re-implementing pub's resolver. The Action must instead expose an optional `cache-key-extra` input and append a fixed-length digest of its value to the pub key only, never to the SDK key and never the value itself, because the input exists for dependency inputs and a dependency change must not force an SDK download, so the key stays bounded and free of reserved characters whatever the consumer passes; a consumer whose dependency inputs live outside the project directory, such as a `path: ../shared` package, then folds them in with one `hashFiles` expression in the workflow. The pub entry may declare one fallback key that drops the dependency digest and nothing else, because pub tolerates a cache that holds more or fewer downloaded packages than a run needs and re-downloads only what is missing, so a partial hit is still less work than a cold start. No fallback may drop the plan digest: the pub cache also holds `global_packages` records and executable shims, `activate_global_packages` activates what the plan requests and never removes what it does not, and a fallback across plans would therefore leave a tool from another job, such as `melos` in a job that asked only for `merry`, available where a cold run would not have it, and then save that state under the new key. Both keys are lookup keys, not determinism guarantees: a package with an open constraint already resolves differently on two cold runs on different days, and the cache neither removes nor adds that variance, because requirement 10 makes activation run on every hit.
-9. A `sdk-version` of `stable` resolves to an exact version only after release metadata is read, so the key must be computed after resolution rather than from the requested value. `action.yml` invokes the CLI once, and `resolve_and_install_sdk` installs in the same call that resolves, so the exact version is not available to the Action before the download today. The CLI must therefore gain a `resolve` command that accepts the full `setup` argument surface, runs the same validation `setup` runs before its first mutation, reads release metadata, prints the resolved plan in a line-oriented `key=value` form that the Action can read without parsing arguments of its own, and performs no SDK archive or artifact download, no extraction, no mutation of `MERRY_SETUP_HOME` and no persistence; the release-metadata request is the one network access it makes. The printed plan must carry, in canonical form, every validated input that changes what `setup` installs or downloads: the SDK family, the exact version, the normalized precache plan, the activation plan as the CLI normalized it, the bundles with the tool versions they pin, such as `--firebase-tools-version` for `flutterfire`, and the bootstrap strategy, which decides whether the bootstrap step runs a root `dart pub get`, `melos bootstrap` or Very Good's bootstrap and therefore what lands in the pub cache. The persistence adapter and the project directory are not part of the plan, because they change where results are written, not what is downloaded. `action.yml` computes keys from that plan rather than re-implementing the CLI's parsing of comma-separated and repeated inputs. Because it validates the complete plan, a combination `setup` would reject before mutation, such as `--sdk dart` with a precache target under requirement 53 of the initial release, makes `resolve` fail, and the Action must not run any restore step after a failed `resolve`, so a restore never lands in `MERRY_SETUP_HOME` ahead of a validation failure. The Action must compute the key from that command's output before any restore step and must not carry a resolver of its own. The Action must then invoke `setup` with that exact version rather than with the requested `stable`, through the exact-version form `--sdk-version` already accepts, so one run resolves the channel once: if the channel advanced between the two calls, a setup that resolved again would install a newer SDK under paths the key never named, and that run would receive no usable cache. An implementation that keys on `stable` must be rejected, because it would serve a stale SDK indefinitely.
-10. A cache hit must produce the same reported state as a cold run at the same moment: the same resolved SDK log line, the same activated package versions, and the same persisted paths. The CLI is cache-unaware, so `dart pub global activate` must still run for every package on a hit, and a package with an open constraint therefore resolves fresh on every run; the restored pub cache saves the download, and never decides which version is active. A restored `global_packages` record must not be trusted as an activation.
-11. A restored tree must pass through the same acceptance path as any pre-existing installation. Before restoring, the Action must check whether the final SDK path already exists, with a read-only test, and when it does it must skip both the restore and the later save of that entry and log why, because a runner that reuses `MERRY_SETUP_HOME` may already hold a tree there: restoring over it would alter a pre-existing installation before the CLI judges it, which requirement 30 forbids, and saving it would publish under the current key a store that another plan built, with the extra precache artifacts and activated tools that `run_flutter_precache` and `activate_global_packages` only ever add and never remove. The pre-existing tree meets the CLI's ordinary acceptance path untouched, and the cache neither trusts nor publishes it. The same existence check, with the same skip of restore and save, must gate the pub entry on the pub cache path. The check is not atomic, and the Action must not try to make it so: caching is specified for a `MERRY_SETUP_HOME` that is private to the job, and a store shared between concurrent jobs is outside this release, as the out-of-scope list states. Otherwise the Action restores into the final SDK path, so a valid restored tree is reused through the initial release's same-version reuse rule, and a corrupt or partial one must cause the deterministic failure that requirement 30 of the initial release already fixes, without automatic deletion, repair or reinstallation. Requirement 30 is not amended. The guard against a poisoned entry sits at save time instead: the Action must save each entry in an explicit step that runs immediately after the setup step and only when it succeeded, never in the cache action's job-level post step, because a post step archives the tree at job teardown, after every consumer step has had a chance to add artifacts to `bin/cache` or damage the tree, and the entry would then no longer match its key. A tree the CLI rejected is therefore never written under its key, and the documented remedy for an entry corrupted after a successful save is deleting it from the repository's cache rather than a self-healing run.
-12. Caching must remain absent from the portable CLI: no save, no restore, no key computation and no cache-aware branch may exist in `bin/merry-setup`. The `resolve` command of requirement 9 is a read-only query that reports what `setup` would select and is usable outside CI, so it is not a cache feature. The Action owns every cache step, so a Codex Cloud wrapper gains nothing to configure and nothing to break.
-13. Third-party cache actions must be pinned to a full commit SHA, as `AGENTS.md` already requires for every Action in a committed workflow.
+6. The composite Action must expose one optional `cache` input.
+    The input must accept `true` or `false` and must default to `false`.
+    Existing consumers must see no change until they opt in.
+    When `cache` is `false`, the Action must:
+
+    - Use the initial release's setup flow unchanged.
+    - Make no `resolve` call.
+    - Make no archive restore.
+    - Make no archive save.
+7. When `cache` is `true`, the Action must maintain one cache entry for the upstream SDK release archive.
+    The Action must restore the archive to `${RUNNER_TEMP}/merry-setup/sdk-archives/<family>/<version>/sdk-archive`, outside `MERRY_SETUP_HOME`.
+    The entry must not contain an extracted SDK tree, Flutter precache artifacts, or any part of `PUB_CACHE`.
+8. The archive cache key must contain the SDK family, the exact resolved SDK version, the runner operating system and architecture, and the SHA-256 checksum from official release metadata.
+    The key must not contain the Flutter precache plan because precache artifacts are not in the entry.
+    The key must have no fallback because an archive for another release is not usable.
+    The requested value `stable` and the exact version it resolves to must produce the same key.
+9. A `sdk-version` of `stable` resolves to an exact version only after the CLI reads release metadata.
+    The CLI must gain a `resolve` command that accepts every `setup` option exposed by the Action and runs the same pre-mutation validation as `setup`.
+    The command must print the resolved plan in a line-oriented `key=value` form.
+    The plan must include the SDK family, the exact SDK version, the official archive SHA-256 checksum, the normalized precache plan, the normalized activation plan, each bundle and its selected tool version, and the bootstrap strategy.
+    The command must make no SDK archive or artifact download.
+    The command must perform no extraction, no mutation of `MERRY_SETUP_HOME`, and no persistence.
+    Release metadata is the only network resource that `resolve` may read.
+    `action.yml` must compute the key from this output instead of parsing setup inputs independently.
+    If `resolve` fails, the Action must not run a cache restore.
+    The Action must invoke `setup` with the exact version from this output instead of resolving `stable` again.
+10. The `setup` command must accept an optional `--sdk-archive <path>` transport option.
+    The composite Action must use this option for its Action-owned archive path, but it must not expose the path as an Action input.
+    The CLI must validate the path before mutation.
+    The path must be absolute and must not contain control characters.
+    The path must not be a symbolic link, including a dangling symbolic link.
+    If the path exists, it must be a regular file.
+    If the path contains an archive restored by the Action, the CLI must obtain the expected checksum from official release metadata and verify the archive before extraction.
+    If the path does not exist, the CLI must download the official archive through its existing download path and must verify the official checksum.
+    After successful verification, the CLI must place the archive at the requested path so the Action can save it.
+    For both sources, the CLI must extract the archive in the initial release's unique sibling staging directory.
+    The CLI must structurally validate the staged SDK and must publish it through the initial release's atomic rename path.
+    The CLI must not execute any file from a restored archive before checksum verification succeeds.
+    A checksum mismatch must fail without extraction, execution, SDK publication, or a fallback release-archive download.
+11. A cache hit must produce the same reported state as a cold run at the same moment.
+    The resolved SDK log line, activated package versions, and persisted paths must be the same.
+    Flutter precache, global package activation, bundle installation, and project bootstrap must run normally after the SDK installation.
+    A hit skips only the SDK release archive download from the upstream distribution.
+12. When `cache` is `true`, the Action must perform these steps:
+
+    - Run `resolve` and compute the exact archive key.
+    - Restore the archive to the Action-owned path.
+    - Run `setup` with the resolved exact version and `--sdk-archive`.
+    - Save the archive in an explicit step immediately after a successful `setup` when no entry matched the exact key.
+
+    The Action must not use the cache action's job-level post step for the save.
+    If checksum verification or setup fails, the Action must not save an entry.
+    The documented remedy for a corrupt immutable entry is to delete that entry from the repository cache.
+13. Remote caching must remain absent from the portable CLI.
+    `bin/merry-setup` must contain no remote save, remote restore, cache-key computation, or cache-hit branch.
+    The `resolve` command is a read-only query.
+    The `--sdk-archive` option selects local archive bytes and does not identify whether they came from a GitHub cache or another caller.
+    The Action owns every remote cache operation.
+14. Third-party cache actions must be pinned to a full commit SHA, as `AGENTS.md` already requires for every Action in a committed workflow.
 
 ## Technical Decisions
 
 1. The npm directory is persisted conditionally rather than always, because an unconditional entry would put a directory on `PATH` for every consumer to serve the one bundle that needs it. [observed]
 2. Caching is an Action input rather than a CLI option, because the two environments differ in exactly this respect: a container is created once and a runner is created per job. Putting it in the CLI would ask every Codex Cloud wrapper to carry a setting that is meaningless there. [operator, 2026-09-03]
-3. The cache key is computed after `stable` resolution rather than from the requested version, for the same reason the initial release resolves before deriving the store path: a movable input must never name a fixed artifact. [derived from requirement 28]
+3. The archive cache key is computed after `stable` resolution rather than from the requested version.
+    The key includes the official checksum because a movable input must never name fixed bytes, and official metadata is the authority for those bytes. [derived from requirements 23 and 28]
 4. The default is `false` rather than `true`, so adopting this release cannot change the behaviour of the fifteen repositories that merged the v1 wrapper today.
 5. Resolution is exposed as a CLI command rather than duplicated in the Action, because `AGENTS.md` keeps the Action a thin composite over the Bash behaviour, and a second resolver in YAML would be a second copy of the metadata parser to drift. [review finding, PR #6]
-6. A pre-existing store is skipped for both restore and save rather than staged, and a shared store is declared out of scope rather than serialized, because every guard added for a reused `MERRY_SETUP_HOME` has invited the next one, and the only complete answer, restoring through the CLI's own staging and atomic publication, would put cache logic in the CLI against requirement 12. Scoping the feature to a job-private store closes the class in one rule. [review findings, PR #6]
-7. A corrupt restore fails rather than reinstalls, because requirement 30 exists to keep `merry-setup` from deleting a final path it did not create in this run, and a hit that quietly deleted and reinstalled would give a hit and a cold run different behaviour, against requirement 10. Saving immediately after a successful setup is the cheaper guard: restoring into a staging area would need the validator outside the CLI, which requirement 12 forbids, and a job-level post step would save whatever later steps left behind. [review finding, PR #6]
+6. The Action caches the official distribution archive rather than an extracted SDK tree.
+    GitHub states that cache contents are not signed or verified and that a workflow must treat restored files as untrusted input.
+    The CLI can authenticate the archive against official release metadata before it extracts or executes SDK content.
+    An extracted tree has no equivalent upstream manifest in the current contract. [review finding, PR #6] [GitHub cache security](https://docs.github.com/en/actions/concepts/workflows-and-actions/dependency-caching#cache-security)
+7. The CLI owns the local archive handoff because it already owns release metadata parsing, checksum verification, extraction, structural validation, and atomic publication.
+    The Action supplies only the local path.
+    This boundary keeps security behavior in the portable Bash implementation without adding remote cache operations to it. [review finding, PR #6]
+8. The managed pub cache is not cached in this release.
+    It contains extracted hosted packages, activation records, and executable shims.
+    Pub compares the expected hosted-package checksum with a checksum record stored inside the same cache before it reuses the extracted package directory.
+    This Spec has no independent provenance check for those restored directories.
+    A later Spec must solve that boundary before the Action may cache `PUB_CACHE`. [local adversarial review, PR #6] [Pub hosted-cache verification](https://github.com/dart-lang/pub/blob/51d9e82d3931536ad629a7430314ac34413c30c4/lib/src/source/hosted.dart#L1247-L1372) [Pub global-package state](https://github.com/dart-lang/pub/blob/51d9e82d3931536ad629a7430314ac34413c30c4/lib/src/global_packages.dart#L38-L72)
 
 ## Testing Strategy
 
 1. Persistence tests must cover a bundle-enabled run whose `$GITHUB_PATH` gains the npm bin directory in the required order, and a bundle-free run whose persisted set is unchanged from the initial release.
 2. A bundle-free run must be asserted to make no npm call at all, so requirement 2 is verified by absence rather than by inspection of the output.
-3. Cache-key tests must show that two runs differing only in resolved SDK version, precache plan, or runner architecture produce different SDK keys, that two runs differing only in activation plan, bootstrap strategy, bundles, or in any one of `pubspec.yaml`, `pubspec_overrides.yaml` or `pubspec.lock`, produce the same SDK key and different pub keys, that two runs differing only in persistence adapter produce the same keys, that a `cache-key-extra` value changes the pub key and not the SDK key, and an empty one changes neither, that two precache plans naming the same targets in a different order or with repeats produce the same key, and that `stable` and the version it resolves to produce the same key.
-4. A restored tree that fails `sdk_installation_is_valid` must be shown to fail deterministically with the initial release's message, not to be repaired or reinstalled, using a fixture whose restored tree is deliberately incomplete; the workflow must be shown not to save an entry after a failed setup step; and the integration save job must add a file under the SDK's `bin/cache` in a step after `merry-setup`, so the restore job can assert that file is absent and prove the save happened before later steps ran. A run with `PUB_CACHE` set must be shown to make no pub restore and no pub save.
+3. Cache-key tests must verify these properties:
+
+    - The default `cache: false` flow produces the initial release's setup command log.
+    - The default `cache: false` flow runs no cache action.
+    - A change to the resolved SDK version, runner architecture, or official archive checksum produces a different key.
+    - A change only to the precache plan, activation plan, bundle plan, bootstrap strategy, project dependency files, persistence adapter, or project directory produces the same key.
+    - The requested value `stable` and the exact version it resolves to produce the same key.
+
+4. Archive tests must use a restored archive fixture with deliberately modified bytes.
+    The fixture must fail checksum verification before extraction.
+    The command log must show that no restored SDK executable ran.
+    The final SDK path must remain absent.
+    The Action must not reach its save step after this failure.
 5. Every cache assertion must be demonstrated to fail before it is trusted, matching the initial release's testing strategy.
-6. The integration workflow must gain two jobs on the same key: a save job that runs the Action cold and writes both entries through the explicit save step requirement 11 requires, and a restore job that depends on it and starts on a fresh runner, because a second invocation inside the save job would find the first invocation's tree still on disk and prove nothing about the cache. Both jobs must pin the same exact SDK version rather than `stable`, and must pin every activated package to an exact version, including `merry` through `--merry-version`, because a channel that advances or a package published between the two jobs would otherwise give them different keys or different activations and fail the comparison for a reason that has nothing to do with the cache. The restore job must then assert the same resolved SDK and activated versions as the save job while skipping the archive download.
-7. The `resolve` command must be shown to leave `MERRY_SETUP_HOME` untouched and to make no request beyond release metadata, using the recording stubs the SDK test already builds, and its printed plan for `stable` must name the version `setup` logs in the same stubbed environment. Two invocations whose precache inputs differ only in order, repetition or comma grouping must print the same plan, and two invocations whose activation inputs differ only in order must print the same plan; a repeated activation input stays the error requirement 37 of the initial release already fixes, in `resolve` exactly as in `setup`. It must be shown to reject every argument combination `setup` rejects before mutation, with the same message, and the Action's tests must show that an invalid plan never reaches the restore step. The Action's own tests must show that `setup` receives the exact version `resolve` printed, using a metadata stub whose `stable` answer changes between the two calls, so a second resolution would be visible as a mismatch.
+6. The integration workflow must use a save job and a dependent restore job.
+    The restore job must start on a fresh runner because a second invocation in the save job would not test the remote entry.
+    Both jobs must pin the same exact SDK version rather than `stable`.
+    Both jobs must pin every activated package to an exact version, including `merry` through `--merry-version`.
+    These pins prevent an unrelated channel or package release from changing the comparison.
+    The restore job must assert the same resolved SDK and activated versions as the save job.
+    It must make no request for the upstream SDK release archive.
+    It may read release metadata, and the cache action must download its own archive on a hit.
+7. The `resolve` command tests must use the recording stubs that the SDK tests already provide.
+    The tests must show that `resolve` leaves `MERRY_SETUP_HOME` untouched and reads no network resource beyond release metadata.
+    The printed plan for `stable` must contain the checksum and exact version that `setup` uses in the same stubbed environment.
+    Equivalent precache order, repetition, and comma grouping must produce the same plan.
+    Equivalent activation order must produce the same plan.
+    A repeated activation input must remain the error that requirement 37 of the initial release defines.
+    Every argument combination that `setup` rejects before mutation must fail in `resolve` with the same message.
+    An invalid plan must not reach the restore step.
+    The Action must pass the exact version from `resolve` to `setup`.
+    A metadata stub whose `stable` answer changes between calls must expose any second channel resolution.
+8. The `--sdk-archive` tests must cover a valid restored archive, a corrupt restored archive, and an absent archive path.
+    A valid restored archive must be checksum-verified before extraction and must not cause an upstream release-archive request.
+    An absent archive path must receive the downloaded and verified archive for the explicit save step.
+    A relative path, a symbolic link, a directory, and a path with control characters must fail before SDK mutation.
 
 ## Out of Scope
 
-- Caching in the portable Bash CLI.
-- Caching with a `MERRY_SETUP_HOME` shared between concurrent jobs, as on a self-hosted runner that pools one store. The existence check of requirement 11 cannot be atomic from the Action, and an atomic restore would need the CLI's staging and publication path, which requirement 12 keeps cache-unaware. A consumer with a shared store must leave `cache` at `false`; the initial release's concurrent-installer protection continues to cover it.
-- Following path dependencies outside the project directory when digesting for the pub key. Requirement 8 gives such a consumer `cache-key-extra` instead.
-- Modelling the invalidation of Flutter's precache artifacts beyond the key. They live under the SDK's `bin/cache` and are therefore saved with the SDK tree, and requirement 8 keys them by target set; whether Flutter later considers a saved artifact stale is Flutter's own concern, not this release's.
+- Remote caching in the portable Bash CLI.
+- Caching an extracted SDK tree or Flutter precache artifacts.
+- Caching the managed or caller-supplied pub cache.
+- A `cache-key-extra` input for project dependency state.
 - A generic npm package interface. The npm path remains the named `flutterfire` bundle.
 - Cache eviction, size limits, or cleanup beyond what the cache action itself provides.
 - Marketplace publication and reusable workflows, still deferred from the initial release.
-
-## Open Questions
-
-1. Should a cache hit still verify the archive checksum? The stored tree is already extracted, so there is no archive to check, and requirement 11 substitutes structural validation. Confirm that substitution is acceptable before implementation. `[UNCERTAIN]`
 
 ## Follow-Ups
 
 - Decompose into two independently mergeable Work Items, because the npm persistence change amends the initial release's requirements while the cache change only adds to the Action.
 - Amend requirements 64 and 65 of `docs/specs/0001-merry-setup/spec.md` in the same change that implements requirement 1, so the two specs cannot disagree.
-- Amend requirement 78 of `docs/specs/0001-merry-setup/spec.md`, which enumerates the Action's inputs exhaustively, in the same change that adds the `cache` and `cache-key-extra` inputs of requirements 6 and 8, for the same reason.
+- Amend requirement 78 of `docs/specs/0001-merry-setup/spec.md`, which enumerates the Action's inputs exhaustively, in the same change that adds the `cache` input of requirement 6.
+- Write a separate Spec before caching any part of `PUB_CACHE`.
+  That Spec must define an independent provenance or integrity check for each restored package tree before an executable can use it.
 - Re-measure the Flutter integration job's duration after caching lands, and record the before and after rather than describing the improvement qualitatively.
