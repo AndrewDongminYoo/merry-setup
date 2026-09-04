@@ -110,3 +110,104 @@ jobs:
           dart --version | grep -F '3.12.0'
           merry --version
           very_good --version
+
+  cache-save:
+    name: Save exact Dart SDK archive cache
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      dart-version: ${{ steps.versions.outputs.dart-version }}
+      merry-version: ${{ steps.versions.outputs.merry-version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6, verified 2026-08-28
+        with:
+          persist-credentials: false
+
+      - name: Create Dart fixture and archive-request audit
+        run: |
+          mkdir -p fixture "${RUNNER_TEMP}/curl-audit/bin"
+          printf 'name: fixture_cache_save\nenvironment:\n  sdk: ^3.12.0\n' >fixture/pubspec.yaml
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'set -euo pipefail' \
+            'for argument in "$@"; do' \
+            '  if [[ ${argument} == "${SDK_ARCHIVE_URL}" ]]; then printf "%s\\n" "${argument}" >>"${SDK_ARCHIVE_REQUEST_LOG}"; fi' \
+            'done' \
+            'exec /usr/bin/curl "$@"' >"${RUNNER_TEMP}/curl-audit/bin/curl"
+          chmod +x "${RUNNER_TEMP}/curl-audit/bin/curl"
+          : >"${RUNNER_TEMP}/sdk-archive-requests.log"
+          printf '%s\n' "${RUNNER_TEMP}/curl-audit/bin" >>"${GITHUB_PATH}"
+          printf '%s\n' \
+            'SDK_ARCHIVE_URL=https://storage.googleapis.com/dart-archive/channels/stable/release/3.12.0/sdk/dartsdk-linux-x64-release.zip' \
+            "SDK_ARCHIVE_REQUEST_LOG=${RUNNER_TEMP}/sdk-archive-requests.log" >>"${GITHUB_ENV}"
+
+      - name: Run Merry Setup and save the archive
+        uses: ./
+        with:
+          sdk: dart
+          sdk-version: 3.12.0
+          cache: true
+          merry-version: 2.4.0
+          bootstrap: dart
+          project-dir: fixture
+
+      - name: Record exact resolved versions
+        id: versions
+        run: |
+          dart_version="$(dart --version 2>&1)"
+          merry_version="$(merry --version 2>&1)"
+          grep -Fq '3.12.0' <<<"${dart_version}"
+          grep -Fq '2.4.0' <<<"${merry_version}"
+          test -f "${RUNNER_TEMP}/merry-setup/sdk-archives/dart/3.12.0/sdk-archive"
+          printf 'dart-version=%s\n' "${dart_version}" >>"${GITHUB_OUTPUT}"
+          printf 'merry-version=%s\n' "${merry_version}" >>"${GITHUB_OUTPUT}"
+
+  cache-restore:
+    name: Restore exact Dart SDK archive cache on a fresh runner
+    needs: cache-save
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6, verified 2026-08-28
+        with:
+          persist-credentials: false
+
+      - name: Create Dart fixture and archive-request audit
+        run: |
+          mkdir -p fixture "${RUNNER_TEMP}/curl-audit/bin"
+          printf 'name: fixture_cache_restore\nenvironment:\n  sdk: ^3.12.0\n' >fixture/pubspec.yaml
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'set -euo pipefail' \
+            'for argument in "$@"; do' \
+            '  if [[ ${argument} == "${SDK_ARCHIVE_URL}" ]]; then printf "%s\\n" "${argument}" >>"${SDK_ARCHIVE_REQUEST_LOG}"; fi' \
+            'done' \
+            'exec /usr/bin/curl "$@"' >"${RUNNER_TEMP}/curl-audit/bin/curl"
+          chmod +x "${RUNNER_TEMP}/curl-audit/bin/curl"
+          : >"${RUNNER_TEMP}/sdk-archive-requests.log"
+          printf '%s\n' "${RUNNER_TEMP}/curl-audit/bin" >>"${GITHUB_PATH}"
+          printf '%s\n' \
+            'SDK_ARCHIVE_URL=https://storage.googleapis.com/dart-archive/channels/stable/release/3.12.0/sdk/dartsdk-linux-x64-release.zip' \
+            "SDK_ARCHIVE_REQUEST_LOG=${RUNNER_TEMP}/sdk-archive-requests.log" >>"${GITHUB_ENV}"
+
+      - name: Run Merry Setup from the saved archive
+        uses: ./
+        with:
+          sdk: dart
+          sdk-version: 3.12.0
+          cache: true
+          merry-version: 2.4.0
+          bootstrap: dart
+          project-dir: fixture
+
+      - name: Verify restored state and no upstream archive request
+        env:
+          EXPECTED_DART_VERSION: ${{ needs.cache-save.outputs.dart-version }}
+          EXPECTED_MERRY_VERSION: ${{ needs.cache-save.outputs.merry-version }}
+        run: |
+          test ! -s "${SDK_ARCHIVE_REQUEST_LOG}"
+          test "$(dart --version 2>&1)" = "${EXPECTED_DART_VERSION}"
+          test "$(merry --version 2>&1)" = "${EXPECTED_MERRY_VERSION}"
+          test -f "${RUNNER_TEMP}/merry-setup/sdk-archives/dart/3.12.0/sdk-archive"

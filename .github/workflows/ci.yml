@@ -23,10 +23,10 @@ jobs:
           persist-credentials: false
 
       - name: Check Bash syntax
-        run: bash -n bin/merry-setup action/preflight.sh action/run.sh test/*.sh
+        run: bash -n bin/merry-setup action/preflight.sh action/resolve.sh action/run.sh test/*.sh
 
       - name: Run ShellCheck
-        run: shellcheck bin/merry-setup action/preflight.sh action/run.sh test/*.sh
+        run: shellcheck bin/merry-setup action/preflight.sh action/resolve.sh action/run.sh test/*.sh
 
       - name: Run test suite
         run: bash test/run.sh
