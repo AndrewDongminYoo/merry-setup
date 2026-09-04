@@ -167,8 +167,10 @@ The Action exposes neither archive transport inputs nor public outputs and reque
 ## Status
 
 The CLI, the composite action, and the black-box test suite implement the complete v1 contract in [the merry-setup specification](docs/specs/0001-merry-setup/spec.md).
-An earlier manual integration run installed real SDKs on Linux x64, but the current workflow head and the archive-cache path have not completed a hosted run.
-Local tests therefore cover the new behavior, while hosted cache readiness remains unverified until the updated integration workflow passes.
+GitHub-hosted integration run [33841597676](https://github.com/AndrewDongminYoo/merry-setup/actions/runs/33841597676) passed at commit [`896e739`](https://github.com/AndrewDongminYoo/merry-setup/commit/896e73948185987202b924d229b2cfaacdfbaff7).
+The run installed real Dart and Flutter SDKs on Linux x64.
+It also saved an exact Dart SDK release archive.
+A fresh runner restored the archive without requesting the upstream SDK archive.
 
 ## Development
 
