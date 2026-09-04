@@ -7,7 +7,16 @@ die() {
 }
 
 readonly bootstrap_strategy="${MERRY_SETUP_BOOTSTRAP:-}"
+readonly cache_enabled="${MERRY_SETUP_CACHE:-false}"
 readonly requested_project_dir="${MERRY_SETUP_PROJECT_DIR:-.}"
+
+case "${cache_enabled}" in
+true | false)
+  ;;
+*)
+  die "Input 'cache' must be 'true' or 'false'."
+  ;;
+esac
 
 case "${bootstrap_strategy}" in
 none)

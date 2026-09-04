@@ -10,6 +10,10 @@ inputs:
     description: "SDK version to install. Use 'stable' or an exact Dart or Flutter version."
     required: false
     default: stable
+  cache:
+    description: "Whether to cache the checksum-verified SDK release archive. Use 'true' only when MERRY_SETUP_HOME is private to this job."
+    required: false
+    default: "false"
   merry:
     description: "Whether to activate Merry globally. Supported values: 'true' or 'false'."
     required: false
@@ -49,9 +53,10 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Validate project manifest
+    - name: Validate inputs and project manifest
       shell: bash
       env:
+        MERRY_SETUP_CACHE: ${{ inputs.cache }}
         MERRY_SETUP_BOOTSTRAP: ${{ inputs.bootstrap }}
         MERRY_SETUP_PROJECT_DIR: ${{ inputs.project-dir }}
       run: '"$GITHUB_ACTION_PATH/action/preflight.sh"'
@@ -59,9 +64,12 @@ runs:
       uses: trunk-io/trunk-action/setup@e1234e67a86010d61ddac8d8ebf4b783e2ffd2fa  # v2.0.0
       with:
         trunk-path: ${{ inputs.trunk-path }}
-    - name: Set up Dart or Flutter environment
+    - name: Resolve SDK archive cache plan
+      id: sdk-cache-plan
+      if: inputs.cache == 'true'
       shell: bash
       env:
+        MERRY_SETUP_CACHE: ${{ inputs.cache }}
         MERRY_SETUP_SDK: ${{ inputs.sdk }}
         MERRY_SETUP_SDK_VERSION: ${{ inputs.sdk-version }}
         MERRY_SETUP_MERRY: ${{ inputs.merry }}
@@ -72,7 +80,39 @@ runs:
         MERRY_SETUP_PRECACHE: ${{ inputs.precache }}
         MERRY_SETUP_BOOTSTRAP: ${{ inputs.bootstrap }}
         MERRY_SETUP_PROJECT_DIR: ${{ inputs.project-dir }}
-      run: '"$GITHUB_ACTION_PATH/action/run.sh"'
+      run: '"$GITHUB_ACTION_PATH/action/resolve.sh"'
+    - name: Restore SDK release archive
+      id: sdk-cache-restore
+      if: inputs.cache == 'true' && steps.sdk-cache-plan.outputs.sdk-present == 'false'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      with:
+        path: ${{ steps.sdk-cache-plan.outputs.archive-path }}
+        key: ${{ steps.sdk-cache-plan.outputs.cache-key }}
+    - name: Set up Dart or Flutter environment
+      shell: bash
+      env:
+        MERRY_SETUP_CACHE: ${{ inputs.cache }}
+        MERRY_SETUP_SDK: ${{ inputs.sdk }}
+        MERRY_SETUP_SDK_VERSION: ${{ inputs.sdk-version }}
+        MERRY_SETUP_RESOLVED_SDK_VERSION: ${{ steps.sdk-cache-plan.outputs.sdk-version }}
+        MERRY_SETUP_RESOLVED_SDK_ARCHIVE_SHA256: ${{ steps.sdk-cache-plan.outputs.sdk-archive-sha256 }}
+        MERRY_SETUP_ARCHIVE_PATH: ${{ steps.sdk-cache-plan.outputs.archive-path }}
+        MERRY_SETUP_SDK_PRESENT: ${{ steps.sdk-cache-plan.outputs.sdk-present }}
+        MERRY_SETUP_MERRY: ${{ inputs.merry }}
+        MERRY_SETUP_MERRY_VERSION: ${{ inputs.merry-version }}
+        MERRY_SETUP_DART_PACKAGES: ${{ inputs.dart-packages }}
+        MERRY_SETUP_BUNDLES: ${{ inputs.bundles }}
+        MERRY_SETUP_FIREBASE_TOOLS_VERSION: ${{ inputs.firebase-tools-version }}
+        MERRY_SETUP_PRECACHE: ${{ inputs.precache }}
+        MERRY_SETUP_BOOTSTRAP: ${{ inputs.bootstrap }}
+        MERRY_SETUP_PROJECT_DIR: ${{ inputs.project-dir }}
+      run: '"$GITHUB_ACTION_PATH/action/run.sh" setup'
+    - name: Save SDK release archive
+      if: success() && inputs.cache == 'true' && steps.sdk-cache-plan.outputs.sdk-present == 'false' && steps.sdk-cache-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      with:
+        path: ${{ steps.sdk-cache-plan.outputs.archive-path }}
+        key: ${{ steps.sdk-cache-plan.outputs.cache-key }}
 
 branding:
   icon: package

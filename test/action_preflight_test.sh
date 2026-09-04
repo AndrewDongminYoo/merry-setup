@@ -22,6 +22,11 @@ run_preflight() {
 }
 
 unset GITHUB_WORKSPACE || true
+MERRY_SETUP_CACHE=yes MERRY_SETUP_BOOTSTRAP=none MERRY_SETUP_PROJECT_DIR=. run_preflight
+assert_nonzero
+assert_stderr_contains "Input 'cache' must be 'true' or 'false'."
+pass "invalid cache enum fails before delegated setup"
+
 MERRY_SETUP_BOOTSTRAP=none MERRY_SETUP_PROJECT_DIR=. run_preflight
 assert_status 0
 pass "none skips workspace and manifest validation"

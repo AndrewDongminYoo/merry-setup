@@ -15,6 +15,7 @@ actual_inputs="${TEST_ROOT}/actual-inputs"
 printf '%s\n' \
   sdk \
   sdk-version \
+  cache \
   merry \
   merry-version \
   dart-packages \
@@ -29,7 +30,10 @@ validate_action_metadata() {
   local metadata_path="$1"
   local preflight_line=""
   local trunk_line=""
+  local resolve_line=""
+  local restore_line=""
   local setup_line=""
+  local save_line=""
   local uses_count=0
   local uses_value=""
   local required_true_count=0
@@ -92,6 +96,32 @@ validate_action_metadata() {
   grep -Fq 'MERRY_SETUP_SDK: ${{ inputs.sdk }}' "${metadata_path}" || return 1
   # shellcheck disable=SC2016 # Action expressions are literal metadata here.
   grep -Fq 'MERRY_SETUP_BOOTSTRAP: ${{ inputs.bootstrap }}' "${metadata_path}" || return 1
+  # shellcheck disable=SC2016 # Action expressions are literal metadata here.
+  grep -Fq 'MERRY_SETUP_CACHE: ${{ inputs.cache }}' "${metadata_path}" || return 1
+  grep -Fq 'actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9' "${metadata_path}" || return 1
+  grep -Fq 'actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9' "${metadata_path}" || return 1
+  # shellcheck disable=SC2016 # Action expressions are literal metadata here.
+  grep -Fq 'path: ${{ steps.sdk-cache-plan.outputs.archive-path }}' "${metadata_path}" || return 1
+  # shellcheck disable=SC2016 # Action expressions are literal metadata here.
+  grep -Fq 'key: ${{ steps.sdk-cache-plan.outputs.cache-key }}' "${metadata_path}" || return 1
+  grep -Fq "if: inputs.cache == 'true'" "${metadata_path}" || return 1
+  grep -Fq "if: success() && inputs.cache == 'true' && steps.sdk-cache-plan.outputs.sdk-present == 'false' && steps.sdk-cache-restore.outputs.cache-hit != 'true'" "${metadata_path}" || return 1
+
+  awk '
+    /^  cache:$/ {
+      inside_target = 1
+      next
+    }
+    inside_target && /^  [a-z0-9-]+:$/ {
+      exit
+    }
+    inside_target && /^    default: "false"$/ {
+      found = 1
+    }
+    END {
+      exit !found
+    }
+  ' "${metadata_path}" || return 1
 
   if grep -Eq '^[[:space:]]*run:.*\$\{\{[[:space:]]*inputs\.' "${metadata_path}"; then
     return 1
@@ -105,13 +135,20 @@ validate_action_metadata() {
     ((uses_count += 1))
     [[ ${uses_value} =~ @[0-9a-f]{40}([[:space:]]+#[[:space:]].*)?$ ]] || return 1
   done < <(sed -n 's/^[[:space:]]*uses:[[:space:]]*//p' "${metadata_path}")
-  [[ ${uses_count} -eq 1 ]] || return 1
+  [[ ${uses_count} -eq 3 ]] || return 1
+
+  if grep -Fq 'restore-keys:' "${metadata_path}"; then
+    return 1
+  fi
 
   preflight_line="$(grep -n -F 'action/preflight.sh' "${metadata_path}" | cut -d: -f1)"
   trunk_line="$(grep -n -F 'trunk-io/trunk-action/setup@' "${metadata_path}" | cut -d: -f1)"
+  resolve_line="$(grep -n -F 'action/resolve.sh' "${metadata_path}" | cut -d: -f1)"
+  restore_line="$(grep -n -F 'actions/cache/restore@' "${metadata_path}" | cut -d: -f1)"
   setup_line="$(grep -n -F 'action/run.sh' "${metadata_path}" | cut -d: -f1)"
-  [[ -n ${preflight_line} && -n ${trunk_line} && -n ${setup_line} ]] || return 1
-  ((preflight_line < trunk_line && trunk_line < setup_line)) || return 1
+  save_line="$(grep -n -F 'actions/cache/save@' "${metadata_path}" | cut -d: -f1)"
+  [[ -n ${preflight_line} && -n ${trunk_line} && -n ${resolve_line} && -n ${restore_line} && -n ${setup_line} && -n ${save_line} ]] || return 1
+  ((preflight_line < trunk_line && trunk_line < resolve_line && resolve_line < restore_line && restore_line < setup_line && setup_line < save_line)) || return 1
 }
 
 canary_path="${TEST_ROOT}/action-canary.yml"
@@ -130,4 +167,5 @@ pass "Action metadata validator canary"
 
 validate_action_metadata "${REPO_ROOT}/action.yml"
 assert_path_absent "${REPO_ROOT}/action.yaml"
+[[ -x ${REPO_ROOT}/action/resolve.sh ]] || fail "Action cache resolver is not executable"
 pass "Action metadata public contract"
