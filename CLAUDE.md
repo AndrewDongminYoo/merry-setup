@@ -71,5 +71,6 @@ Black-box only: every test drives `bin/merry-setup` through `run_cli` or `run_cl
 
 ## Docs and workflow
 
-- `.act/` configures the ACT spec workflow (backend `local`, artifacts in `docs/specs/`). Specs are the requirements source of truth; do not widen scope without one.
+- Specs in `docs/specs/` are the requirements source of truth.
+  Do not widen scope without one.
 - `.markdownlint.yaml` disables MD013, so prose uses no hard wraps and sentence-level line breaks.
