@@ -61,6 +61,9 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
     - Make no archive restore.
     - Make no archive save.
 7. When `cache` is `true`, the Action must maintain one cache entry for the upstream SDK release archive.
+    Archive caching is supported only when `MERRY_SETUP_HOME` is private to the current job and is not shared with another concurrent setup process.
+    A consumer that pools one store across concurrent jobs must leave `cache` set to `false`.
+    The `cache` input description and usage documentation must state this precondition.
     The Action must restore the archive to `${RUNNER_TEMP}/merry-setup/sdk-archives/<family>/<version>/sdk-archive`, outside `MERRY_SETUP_HOME`.
     The entry must not contain an extracted SDK tree, Flutter precache artifacts, or any part of `PUB_CACHE`.
 8. The archive cache key must contain the SDK family, the exact resolved SDK version, the runner operating system and architecture, and the SHA-256 checksum from official release metadata.
@@ -102,6 +105,9 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
 
     - Run `resolve` and compute the exact archive key and final SDK path.
     - Check the final SDK path without modifying it.
+
+    The existence check is not atomic and must not be treated as a concurrency guard.
+    The job-private-store requirement prevents another setup process from publishing into the same `MERRY_SETUP_HOME` between this check and `setup`.
 
     If the final SDK path exists or is a symbolic link, the Action must:
 
@@ -154,6 +160,8 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
     The CLI remains responsible for deciding whether the existing path is reusable. [review finding, PR #6]
 10. The archive checksum crosses the `resolve`-to-`setup` boundary as explicit data.
     `setup` compares it with the official metadata it reads before archive use, so changed metadata cannot place different bytes under the earlier cache key. [review finding, PR #6]
+11. A store shared between concurrent jobs is excluded from archive caching rather than serialized by the Action.
+    Cross-process synchronization around restore, setup, and save would exceed the thin Action adapter, while `cache: false` retains the initial release's concurrent-installer behavior. [review finding, PR #6]
 
 ## Testing Strategy
 
@@ -207,6 +215,8 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
 - Remote caching in the portable Bash CLI.
 - Caching an extracted SDK tree or Flutter precache artifacts.
 - Caching the managed or caller-supplied pub cache.
+- Archive caching with a `MERRY_SETUP_HOME` shared between concurrent jobs, including a pooled self-hosted store.
+  Such a consumer must leave `cache` set to `false`, so the initial release's concurrent-installer protection remains responsible for SDK publication.
 - A `cache-key-extra` input for project dependency state.
 - A generic npm package interface. The npm path remains the named `flutterfire` bundle.
 - Cache eviction, size limits, or cleanup beyond what the cache action itself provides.
