@@ -120,6 +120,11 @@ create_sdk_stubs() {
     'printf '\''COMMAND tar\n'\'' >>"${TEST_COMMAND_LOG}"' \
     'printf '\''ARG %s\n'\'' "$@" >>"${TEST_COMMAND_LOG}"' \
     '[[ ${EXTRACT_FAIL:-0} != 1 ]] || exit 9' \
+    'if [[ ${REQUIRE_NO_SAME_OWNER:-0} == 1 ]]; then' \
+    '  ownership_flag_present=false' \
+    '  for argument in "$@"; do [[ ${argument} != --no-same-owner ]] || ownership_flag_present=true; done' \
+    '  [[ ${ownership_flag_present} == true ]] || exit 11' \
+    'fi' \
     'extract_root=""' \
     'while (($# > 0)); do' \
     '  case "$1" in' \
@@ -128,8 +133,8 @@ create_sdk_stubs() {
     '  esac' \
     'done' \
     'mkdir -p "${extract_root}/flutter/bin"' \
-    'printf '\''%s\n'\'' '\''#!/usr/bin/env bash'\'' '\''echo "{\"frameworkVersion\":\"${STAGED_FLUTTER_VERSION}\",\"dartSdkVersion\":\"${STAGED_DART_VERSION}\"}"'\'' >"${extract_root}/flutter/bin/flutter"' \
-    'printf '\''%s\n'\'' '\''#!/usr/bin/env bash'\'' '\''printf "Dart SDK version: %s (stable) on linux_x64\\n" "${STAGED_DART_VERSION}" >&2'\'' >"${extract_root}/flutter/bin/dart"' \
+    'printf '\''%s\n'\'' '\''#!/usr/bin/env bash'\'' '\''if [[ ${STAGED_FLUTTER_FAIL:-0} == 1 ]]; then printf "Flutter version command failed\\n" >&2; exit 24; fi'\'' '\''echo "{\"frameworkVersion\":\"${STAGED_FLUTTER_VERSION}\",\"dartSdkVersion\":\"${STAGED_DART_VERSION}\"}"'\'' >"${extract_root}/flutter/bin/flutter"' \
+    'printf '\''%s\n'\'' '\''#!/usr/bin/env bash'\'' '\''if [[ ${STAGED_FLUTTER_DART_FAIL:-0} == 1 ]]; then printf "fatal: detected dubious ownership in Flutter SDK\\n" >&2; exit 23; fi'\'' '\''printf "Dart SDK version: %s (stable) on linux_x64\\n" "${STAGED_DART_VERSION}" >&2'\'' >"${extract_root}/flutter/bin/dart"' \
     'chmod +x "${extract_root}/flutter/bin/flutter" "${extract_root}/flutter/bin/dart"' >"${stub_path}"
   chmod +x "${stub_path}"
 
@@ -182,7 +187,7 @@ reset_case() {
   export STAGED_FLUTTER_VERSION=3.44.0
   export TEST_UNAME_S=Linux
   export TEST_UNAME_M=x86_64
-  unset ARCHIVE_SWAP_SOURCE ARCHIVE_SWAP_TARGET CURL_FAIL_PATTERN CURL_FAIL_EXACT EXTRACT_FAIL FORBIDDEN_ARCHIVE_CONTENT PUBLISH_RACE PUBLISH_RACE_TARGET RACE_FAMILY RACE_VERSION RACE_DART_VERSION RACE_MV_STATUS RACE_SYMLINK_TARGET STAGED_DART_AS_FLUTTER || true
+  unset ARCHIVE_SWAP_SOURCE ARCHIVE_SWAP_TARGET CURL_FAIL_PATTERN CURL_FAIL_EXACT EXTRACT_FAIL FORBIDDEN_ARCHIVE_CONTENT PUBLISH_RACE PUBLISH_RACE_TARGET RACE_FAMILY RACE_VERSION RACE_DART_VERSION RACE_MV_STATUS RACE_SYMLINK_TARGET REQUIRE_NO_SAME_OWNER STAGED_DART_AS_FLUTTER STAGED_FLUTTER_DART_FAIL STAGED_FLUTTER_FAIL || true
 }
 
 run_setup() {
@@ -656,6 +661,32 @@ assert_nonzero
 assert_stderr_contains "Effective Dart runtime 3.11.4 is below the minimum 3.12.0."
 assert_archive_download_count 0
 pass "Flutter bundled Dart floor blocks archive download"
+
+reset_case
+export ARCHIVE_ACTUAL_SHA256="${FLUTTER_ARCHIVE_SHA256}"
+export REQUIRE_NO_SAME_OWNER=1
+run_setup flutter stable
+assert_status 0
+assert_stdout_contains "Merry setup completed"
+pass "Flutter extraction discards archive ownership"
+
+reset_case
+export ARCHIVE_ACTUAL_SHA256="${FLUTTER_ARCHIVE_SHA256}"
+export STAGED_FLUTTER_DART_FAIL=1
+run_setup flutter stable
+assert_nonzero
+assert_stderr_contains "fatal: detected dubious ownership in Flutter SDK"
+assert_stderr_contains "Staged Flutter SDK does not match release metadata."
+pass "staged Flutter validation exposes Dart launcher errors"
+
+reset_case
+export ARCHIVE_ACTUAL_SHA256="${FLUTTER_ARCHIVE_SHA256}"
+export STAGED_FLUTTER_FAIL=1
+run_setup flutter stable
+assert_nonzero
+assert_stderr_contains "Flutter version command failed"
+assert_stderr_contains "Staged Flutter SDK does not match release metadata."
+pass "staged Flutter validation exposes Flutter launcher errors"
 
 reset_case
 export ARCHIVE_ACTUAL_SHA256="${FLUTTER_ARCHIVE_SHA256}"

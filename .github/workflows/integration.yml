@@ -77,6 +77,43 @@ jobs:
           flutterfire --version
           firebase --version
 
+  flutter-root-container:
+    name: Flutter stable in a root container
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 30
+    steps:
+      - name: Install base tools
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends ca-certificates curl git libstdc++6 xz-utils
+
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6, verified 2026-08-28
+        with:
+          persist-credentials: false
+
+      - name: Install Flutter as root
+        env:
+          HOME: /root
+          MERRY_SETUP_HOME: /root/.merry-setup
+        run: |
+          test "$(id -u)" -eq 0
+          ./bin/merry-setup setup \
+            --sdk flutter \
+            --bootstrap none \
+            --persist-path none \
+            --no-merry
+
+          mapfile -t flutter_bins < <(find "${MERRY_SETUP_HOME}/sdks/flutter" -mindepth 3 -maxdepth 3 -type f -path '*/bin/flutter')
+          test "${#flutter_bins[@]}" -eq 1
+          test "$(stat -c '%u' "${flutter_bins[0]%/bin/flutter}")" -eq 0
+          "${flutter_bins[0]}" --version --machine
+
   # Requirement 20 asks this matrix for exact Dart 3.12.0 with Merry and Very Good CLI activation.
   # It deliberately does not run 'bootstrap: very-good': Very Good CLI documents the Flutter SDK as
   # a prerequisite, so that strategy cannot succeed in a Dart-only environment.
