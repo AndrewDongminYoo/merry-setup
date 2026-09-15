@@ -14,7 +14,7 @@ The root `action.yml` is a thin GitHub composite action over that same implement
 4. Derives a managed `PUB_CACHE` for that exact SDK version and activates `merry` plus every requested global tool with `dart pub global activate`.
 5. Installs the `flutterfire` bundle (`flutterfire_cli` and `firebase-tools`) when requested.
 6. Runs `flutter precache` once with the selected platform targets.
-7. Selects a Trunk launcher and confirms it with `trunk version`.
+7. Selects a Trunk launcher and runs `trunk version` as an operational check.
 8. Persists `PATH` and `PUB_CACHE` through the selected adapter.
 9. Runs the selected project bootstrap strategy.
 10. Prints `Merry setup completed` only after every step succeeded.
@@ -79,21 +79,49 @@ Bundle-free runs do not query or persist an npm directory.
 ## Codex Cloud setup script
 
 Consumers keep a small project-local wrapper that downloads a pinned revision of the CLI to a file and then executes it.
+Supply the full Git commit SHA and the expected lowercase SHA-256 digest together.
+The Git commit SHA selects the source revision.
+It is not a client-computed checksum.
 Never pipe the download into a shell, never reference a branch, and never reference a movable tag.
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Set this to a verified full commit SHA from AndrewDongminYoo/merry-setup.
-readonly MERRY_SETUP_REVISION="${MERRY_SETUP_REVISION:?set MERRY_SETUP_REVISION to a full commit SHA}"
+# Update and review these two literals together.
+readonly MERRY_SETUP_REVISION=874b91d59e81270c32242743235261b06ae1fce8
+readonly MERRY_SETUP_SHA256=4072599a3567ed309a9188befa4a974de04e9f72217c7bfa714826b26dfd0e60
 readonly MERRY_SETUP_URL="https://raw.githubusercontent.com/AndrewDongminYoo/merry-setup/${MERRY_SETUP_REVISION}/bin/merry-setup"
-readonly MERRY_SETUP_BIN="${HOME}/.merry-setup/bin/merry-setup"
+readonly MERRY_SETUP_BIN="${HOME}/.merry-setup/bin/merry-setup-${MERRY_SETUP_REVISION}"
 
 [[ ${MERRY_SETUP_REVISION} =~ ^[0-9a-f]{40}$ ]] || { echo "MERRY_SETUP_REVISION must be a full commit SHA." >&2; exit 1; }
-mkdir -p "$(dirname "${MERRY_SETUP_BIN}")"
-curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --output "${MERRY_SETUP_BIN}" "${MERRY_SETUP_URL}"
-chmod 0755 "${MERRY_SETUP_BIN}"
+[[ ${MERRY_SETUP_SHA256} =~ ^[0-9a-f]{64}$ ]] || { echo "MERRY_SETUP_SHA256 must be 64 lowercase hexadecimal characters." >&2; exit 1; }
+command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required to verify merry-setup." >&2; exit 1; }
+
+verify_merry_setup_bin() {
+  local candidate="$1"
+  local actual_sha256
+
+  [[ -f ${candidate} && ! -L ${candidate} && -x ${candidate} ]] || return 1
+  actual_sha256="$(sha256sum -- "${candidate}")" || return 1
+  actual_sha256="${actual_sha256%%[[:space:]]*}"
+  [[ ${actual_sha256} == "${MERRY_SETUP_SHA256}" ]]
+}
+
+if [[ -e ${MERRY_SETUP_BIN} || -L ${MERRY_SETUP_BIN} ]]; then
+  verify_merry_setup_bin "${MERRY_SETUP_BIN}" || { echo "Cached merry-setup digest mismatch: ${MERRY_SETUP_BIN}" >&2; exit 1; }
+else
+  mkdir -p "$(dirname "${MERRY_SETUP_BIN}")"
+  temporary_bin="$(mktemp "${MERRY_SETUP_BIN}.download.XXXXXX")"
+  trap 'rm -f -- "${temporary_bin}"' EXIT
+  curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --output "${temporary_bin}" "${MERRY_SETUP_URL}"
+  chmod 0755 "${temporary_bin}"
+  verify_merry_setup_bin "${temporary_bin}" || { echo "Downloaded merry-setup digest mismatch." >&2; exit 1; }
+  mv -f -- "${temporary_bin}" "${MERRY_SETUP_BIN}"
+  trap - EXIT
+fi
+
+verify_merry_setup_bin "${MERRY_SETUP_BIN}" || { echo "Cached merry-setup digest mismatch: ${MERRY_SETUP_BIN}" >&2; exit 1; }
 
 "${MERRY_SETUP_BIN}" setup \
   --sdk flutter \
@@ -105,6 +133,22 @@ chmod 0755 "${MERRY_SETUP_BIN}"
 
 The wrapper runs from the project root, so `--project-dir` defaults correctly.
 Repeated runs reuse the installed SDK, re-activate each planned package once, and keep one managed `~/.bashrc` block.
+The child setup process cannot export `PATH` into the shell that ran the wrapper.
+For immediate use in that same shell, source only the managed block:
+
+```bash
+source <(sed -n '/^# >>> merry-setup managed block >>>$/,/^# <<< merry-setup managed block <<<$/p' "${HOME}/.bashrc")
+```
+
+Do not construct an SDK `PATH` entry in the wrapper.
+The default selected SDK path is `$HOME/.merry-setup/sdks/<family>/<version>/bin`.
+When explicitly set, `MERRY_SETUP_HOME` replaces `$HOME/.merry-setup` in that path.
+
+Trunk uses a separate upstream launcher contract.
+When no supported launcher exists, the portable CLI may download the unversioned official `https://trunk.io/releases/trunk` launcher.
+The v1 contract has no independent Trunk checksum table or version URL.
+`trunk version` checks that the selected launcher runs.
+It does not authenticate the launcher.
 
 ## GitHub composite action
 
