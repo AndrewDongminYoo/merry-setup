@@ -510,14 +510,22 @@ sdk_installation_is_valid() {
     [[ -f ${sdk_root}/include/dart_api.h && ! -L ${sdk_root}/include/dart_api.h ]] || return 1
     [[ ! -e ${sdk_root}/bin/flutter && ! -L ${sdk_root}/bin/flutter ]] || return 1
   fi
-  dart_output="$("${sdk_root}/bin/dart" --version 2>&1)" || return 1
+  if ! dart_output="$("${sdk_root}/bin/dart" --version 2>&1)"; then
+    printf 'SDK validation command failed: %s/bin/dart --version\n' "${sdk_root}" >&2
+    [[ -z ${dart_output} ]] || printf '%s\n' "${dart_output}" >&2
+    return 1
+  fi
   actual_dart_version="$(extract_first_semver "${dart_output}")" || return 1
   [[ ${actual_dart_version} == "${expected_dart_version}" ]] || return 1
   version_is_at_least "${actual_dart_version}" "${MINIMUM_DART_RUNTIME}" || return 1
 
   if [[ ${sdk_family} == flutter ]]; then
     [[ -x ${sdk_root}/bin/flutter ]] || return 1
-    flutter_output="$("${sdk_root}/bin/flutter" --version --machine 2>&1)" || return 1
+    if ! flutter_output="$("${sdk_root}/bin/flutter" --version --machine 2>&1)"; then
+      printf 'SDK validation command failed: %s/bin/flutter --version --machine\n' "${sdk_root}" >&2
+      [[ -z ${flutter_output} ]] || printf '%s\n' "${flutter_output}" >&2
+      return 1
+    fi
     actual_flutter_version="$(extract_machine_value "${flutter_output}" frameworkVersion)" || return 1
     actual_dart_version="$(extract_machine_value "${flutter_output}" dartSdkVersion)" || return 1
     actual_dart_version="$(extract_first_semver "${actual_dart_version}")" || return 1
@@ -603,7 +611,7 @@ install_resolved_sdk() {
     staged_sdk="${extract_root}/dart-sdk"
   else
     command -v tar >/dev/null 2>&1 || die "tar is required to extract the Flutter SDK archive."
-    tar -xJf "${archive_file}" -C "${extract_root}" || die "Failed to extract Flutter SDK archive."
+    tar --no-same-owner -xJf "${archive_file}" -C "${extract_root}" || die "Failed to extract Flutter SDK archive."
     staged_sdk="${extract_root}/flutter"
   fi
 
