@@ -1,3 +1,4 @@
+---
 # Disables rules that may conflict with Prettier
 
 # heading-increment - Heading levels should only increment by one level at a time
