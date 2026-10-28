@@ -10,7 +10,7 @@ The root `action.yml` is a thin GitHub composite action over that same implement
 1. Validates every option and the project manifest before any download or file mutation.
 2. Resolves `stable` to an exact release version from the official Dart or Flutter release metadata.
 3. Installs the SDK into `${MERRY_SETUP_HOME}/sdks/<family>/<version>` through a checksum-verified staging directory, or reuses a valid existing installation.
-    A caller can supply a local release archive that the CLI copies into private staging, binds to current official checksum metadata, and extracts only from that verified snapshot.
+   A caller can supply a local release archive that the CLI copies into private staging, binds to current official checksum metadata, and extracts only from that verified snapshot.
 4. Derives a managed `PUB_CACHE` for that exact SDK version and activates `merry` plus every requested global tool with `dart pub global activate`.
 5. Installs the `flutterfire` bundle (`flutterfire_cli` and `firebase-tools`) when requested.
 6. Runs `flutter precache` once with the selected platform targets.
@@ -43,19 +43,19 @@ ADAPTER:  none | bashrc | github
 It reads only official release metadata.
 `bootstrap` locates the SDK family already on `PATH`, verifies its exact version and the runtime floor, derives the same managed `PUB_CACHE`, and runs only the bootstrap strategy; it never downloads an SDK, activates a tool, or reads remote release metadata.
 
-| Option | Meaning |
-| --- | --- |
-| `--sdk-version stable\|<exact>` | SDK version to install or, for `bootstrap`, to require on `PATH`. Defaults to `stable`. |
-| `--project-dir <path>` | Project root containing `pubspec.yaml`. Defaults to the current working directory. |
-| `--no-merry` | Skip the default `merry` activation. |
-| `--merry-version <constraint>` | Pub version constraint for `merry`. Conflicts with `--no-merry`. |
-| `--dart-package <name>[=<constraint>]` | Additional global package. Repeatable. Explicit constraints also apply to implied `melos`, `very_good_cli`, and `flutterfire_cli`. |
-| `--bundle flutterfire` | Activate `flutterfire_cli` and install `firebase-tools` through npm. Repeatable for future bundles. |
-| `--firebase-tools-version <exact>` | Exact `firebase-tools` version. Valid only with the `flutterfire` bundle. |
-| `--precache <targets>` | Comma-separated `android`, `web`, `linux`. Repeatable. Flutter only. |
-| `--trunk-path <path>` | Explicit Trunk launcher. When absent, `.trunk/bin/trunk`, `tools/trunk`, and `trunk` under the project are reused, then `${MERRY_SETUP_HOME}/bin/trunk`, then the official launcher is downloaded. |
-| `--sdk-archive <path>` | Absolute local SDK archive transport path. Valid only for `setup` and only with `--sdk-archive-sha256`. |
-| `--sdk-archive-sha256 <digest>` | Exact lowercase SHA-256 from a prior `resolve` plan. Valid only for `setup` and only with `--sdk-archive`. |
+| Option                                 | Meaning                                                                                                                                                                                            |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--sdk-version stable\|<exact>`        | SDK version to install or, for `bootstrap`, to require on `PATH`. Defaults to `stable`.                                                                                                            |
+| `--project-dir <path>`                 | Project root containing `pubspec.yaml`. Defaults to the current working directory.                                                                                                                 |
+| `--no-merry`                           | Skip the default `merry` activation.                                                                                                                                                               |
+| `--merry-version <constraint>`         | Pub version constraint for `merry`. Conflicts with `--no-merry`.                                                                                                                                   |
+| `--dart-package <name>[=<constraint>]` | Additional global package. Repeatable. Explicit constraints also apply to implied `melos`, `very_good_cli`, and `flutterfire_cli`.                                                                 |
+| `--bundle flutterfire`                 | Activate `flutterfire_cli` and install `firebase-tools` through npm. Repeatable for future bundles.                                                                                                |
+| `--firebase-tools-version <exact>`     | Exact `firebase-tools` version. Valid only with the `flutterfire` bundle.                                                                                                                          |
+| `--precache <targets>`                 | Comma-separated `android`, `web`, `linux`. Repeatable. Flutter only.                                                                                                                               |
+| `--trunk-path <path>`                  | Explicit Trunk launcher. When absent, `.trunk/bin/trunk`, `tools/trunk`, and `trunk` under the project are reused, then `${MERRY_SETUP_HOME}/bin/trunk`, then the official launcher is downloaded. |
+| `--sdk-archive <path>`                 | Absolute local SDK archive transport path. Valid only for `setup` and only with `--sdk-archive-sha256`.                                                                                            |
+| `--sdk-archive-sha256 <digest>`        | Exact lowercase SHA-256 from a prior `resolve` plan. Valid only for `setup` and only with `--sdk-archive`.                                                                                         |
 
 Bootstrap strategies run `dart pub get`, `flutter pub get`, `melos bootstrap`, or `very_good packages get --recursive` inside the project directory.
 `--enforce-lockfile` is added to the Dart, Flutter, and Melos commands when the root `pubspec.lock` is tracked by git.
@@ -63,13 +63,13 @@ Bootstrap strategies run `dart pub get`, `flutter pub get`, `melos bootstrap`, o
 
 ### Environment contracts
 
-| Variable | Behavior |
-| --- | --- |
-| `MERRY_SETUP_HOME` | Root for managed SDKs, the managed pub cache, and the downloaded Trunk launcher. Defaults to `$HOME/.merry-setup`. Must be an absolute path without `:` or control characters. |
-| `PUB_CACHE` | Overrides the managed cache. When set it must be a nonempty absolute path; the default is `${MERRY_SETUP_HOME}/pub-cache/<family>/<version>`. |
-| `GITHUB_ENV`, `GITHUB_PATH` | Required writable files for `--persist-path github`. The Action supplies them. |
-| `HOME` | Required for `--persist-path bashrc`, which rewrites one `merry-setup` managed block in `~/.bashrc`. |
-| `DEBUG=1` | Enables `set -x` tracing. Do not enable it once secret-bearing commands or environments are introduced, because the trace prints every argument. |
+| Variable                    | Behavior                                                                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `MERRY_SETUP_HOME`          | Root for managed SDKs, the managed pub cache, and the downloaded Trunk launcher. Defaults to `$HOME/.merry-setup`. Must be an absolute path without `:` or control characters. |
+| `PUB_CACHE`                 | Overrides the managed cache. When set it must be a nonempty absolute path; the default is `${MERRY_SETUP_HOME}/pub-cache/<family>/<version>`.                                  |
+| `GITHUB_ENV`, `GITHUB_PATH` | Required writable files for `--persist-path github`. The Action supplies them.                                                                                                 |
+| `HOME`                      | Required for `--persist-path bashrc`, which rewrites one `merry-setup` managed block in `~/.bashrc`.                                                                           |
+| `DEBUG=1`                   | Enables `set -x` tracing. Do not enable it once secret-bearing commands or environments are introduced, because the trace prints every argument.                               |
 
 The `bashrc` adapter keeps exactly one block between `# >>> merry-setup managed block >>>` and `# <<< merry-setup managed block <<<`, replaces stale exact-version paths on rerun, and refuses to rewrite a file whose block is incomplete.
 The `github` adapter appends `PUB_CACHE` to `GITHUB_ENV` and the SDK, pub-cache, and launcher `bin` directories to `GITHUB_PATH` so that later steps see the SDK first.
@@ -174,20 +174,20 @@ steps:
   - run: flutter analyze
 ```
 
-| Input | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `sdk` | yes | | `dart` or `flutter`. |
-| `bootstrap` | yes | | `none`, `dart`, `flutter`, `melos`, or `very-good`. |
-| `sdk-version` | no | `stable` | `stable` or an exact version. |
-| `cache` | no | `false` | `true` caches only the verified SDK release archive. Use it only when `MERRY_SETUP_HOME` is private to the current job. |
-| `merry` | no | `true` | `true` or `false`; `false` skips the default `merry` activation. |
-| `merry-version` | no | | Pub constraint for `merry`. |
-| `dart-packages` | no | | Additional global packages, one `<name>` or `<name>=<constraint>` per line. |
-| `bundles` | no | | Bundles, one per line. Currently `flutterfire`. |
-| `firebase-tools-version` | no | | Exact `firebase-tools` version, valid only with the `flutterfire` bundle. |
-| `precache` | no | | Flutter precache targets, one per line. Invalid when `sdk` is `dart`. |
-| `project-dir` | no | `.` | Project directory containing `pubspec.yaml`. |
-| `trunk-path` | no | | Existing Trunk launcher; otherwise the official setup action locates or downloads one. |
+| Input                    | Required | Default  | Meaning                                                                                                                 |
+| ------------------------ | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `sdk`                    | yes      |          | `dart` or `flutter`.                                                                                                    |
+| `bootstrap`              | yes      |          | `none`, `dart`, `flutter`, `melos`, or `very-good`.                                                                     |
+| `sdk-version`            | no       | `stable` | `stable` or an exact version.                                                                                           |
+| `cache`                  | no       | `false`  | `true` caches only the verified SDK release archive. Use it only when `MERRY_SETUP_HOME` is private to the current job. |
+| `merry`                  | no       | `true`   | `true` or `false`; `false` skips the default `merry` activation.                                                        |
+| `merry-version`          | no       |          | Pub constraint for `merry`.                                                                                             |
+| `dart-packages`          | no       |          | Additional global packages, one `<name>` or `<name>=<constraint>` per line.                                             |
+| `bundles`                | no       |          | Bundles, one per line. Currently `flutterfire`.                                                                         |
+| `firebase-tools-version` | no       |          | Exact `firebase-tools` version, valid only with the `flutterfire` bundle.                                               |
+| `precache`               | no       |          | Flutter precache targets, one per line. Invalid when `sdk` is `dart`.                                                   |
+| `project-dir`            | no       | `.`      | Project directory containing `pubspec.yaml`.                                                                            |
+| `trunk-path`             | no       |          | Existing Trunk launcher; otherwise the official setup action locates or downloads one.                                  |
 
 Multi-line inputs ignore blank lines and a trailing carriage return, and every remaining line becomes exactly one CLI argument without shell re-evaluation.
 When `cache` is `false`, the Action follows the initial setup path and makes no resolve, cache restore, or cache save call.

@@ -24,38 +24,38 @@
 
 ## File Ownership Map
 
-| Path | Responsibility |
-| --- | --- |
-| `bin/merry-setup` | Complete portable CLI, validation, SDK store, tool plan, persistence, Trunk selection, and bootstrap orchestration. |
-| `action.yml` | Exact public Action inputs and ordered Composite Action steps. |
-| `action/preflight.sh` | Non-mutating bootstrap enum and manifest guard before delegated Trunk setup. |
-| `action/run.sh` | Safe environment-to-argv adapter for the canonical CLI. |
-| `test/test_helper.sh` | Isolated fixture roots, assertions, command stubs, logs, and cleanup. |
-| `test/run.sh` | Explicit test entry point. |
-| `test/*_test.sh` | Black-box contract groups with focused command-flow assertions. |
-| `test/fixtures/**` | Synthetic official-metadata-shaped release and checksum inputs. |
-| `.trunk/trunk.yaml` | Shared pinned linter gate and non-mutating pre-push check. |
-| `.markdownlint.yaml`, `.yamllint.yaml` | Narrow repository documentation and YAML policy. |
-| `.github/workflows/ci.yml` | Fast Linux x64 syntax, lint, and fixture-test gate. |
-| `.github/workflows/integration.yml` | Manual and release-gated real Dart and Flutter smoke matrix. |
-| `LICENSE`, `README.md` | MIT distribution boundary and pinned consumer usage. |
+| Path                                   | Responsibility                                                                                                      |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `bin/merry-setup`                      | Complete portable CLI, validation, SDK store, tool plan, persistence, Trunk selection, and bootstrap orchestration. |
+| `action.yml`                           | Exact public Action inputs and ordered Composite Action steps.                                                      |
+| `action/preflight.sh`                  | Non-mutating bootstrap enum and manifest guard before delegated Trunk setup.                                        |
+| `action/run.sh`                        | Safe environment-to-argv adapter for the canonical CLI.                                                             |
+| `test/test_helper.sh`                  | Isolated fixture roots, assertions, command stubs, logs, and cleanup.                                               |
+| `test/run.sh`                          | Explicit test entry point.                                                                                          |
+| `test/*_test.sh`                       | Black-box contract groups with focused command-flow assertions.                                                     |
+| `test/fixtures/**`                     | Synthetic official-metadata-shaped release and checksum inputs.                                                     |
+| `.trunk/trunk.yaml`                    | Shared pinned linter gate and non-mutating pre-push check.                                                          |
+| `.markdownlint.yaml`, `.yamllint.yaml` | Narrow repository documentation and YAML policy.                                                                    |
+| `.github/workflows/ci.yml`             | Fast Linux x64 syntax, lint, and fixture-test gate.                                                                 |
+| `.github/workflows/integration.yml`    | Manual and release-gated real Dart and Flutter smoke matrix.                                                        |
+| `LICENSE`, `README.md`                 | MIT distribution boundary and pinned consumer usage.                                                                |
 
 ## Requirement Coverage
 
-| Requirements | Owning tasks |
-| --- | --- |
-| 1–8 | Tasks 3 and 9 |
-| 9–14 | Tasks 2, 3, and 8 |
-| 15–31 | Tasks 2 and 4 |
-| 32–42 | Tasks 2 and 5 |
-| 43–45 | Tasks 5 and 7 |
-| 46–51 | Task 5 |
-| 52–55 | Task 6 |
-| 56–62 | Tasks 1 and 7 |
-| 63–68 | Tasks 3 and 7 |
-| 69–77 | Task 8 |
-| 78–85 | Task 3 |
-| 86–91 | Tasks 4–9 |
+| Requirements | Owning tasks      |
+| ------------ | ----------------- |
+| 1–8          | Tasks 3 and 9     |
+| 9–14         | Tasks 2, 3, and 8 |
+| 15–31        | Tasks 2 and 4     |
+| 32–42        | Tasks 2 and 5     |
+| 43–45        | Tasks 5 and 7     |
+| 46–51        | Task 5            |
+| 52–55        | Task 6            |
+| 56–62        | Tasks 1 and 7     |
+| 63–68        | Tasks 3 and 7     |
+| 69–77        | Task 8            |
+| 78–85        | Task 3            |
+| 86–91        | Tasks 4–9         |
 
 ---
 

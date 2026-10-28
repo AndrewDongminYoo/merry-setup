@@ -25,31 +25,31 @@
 
 ## File Ownership Map
 
-| Path | Responsibility |
-| --- | --- |
-| `bin/merry-setup` | Canonical validation, read-only plan resolution, local archive handoff, checksum verification, installation, and persistence. |
-| `action/preflight.sh` | Non-mutating validation of `cache`, `bootstrap`, and the selected project manifest before delegated setup. |
-| `action/run.sh` | Shared Action input-to-CLI argv conversion for `resolve` and `setup`. |
-| `action/resolve.sh` | Parse the resolved CLI plan, compute the exact Action-owned archive path and cache key, inspect the final SDK path, and write internal step outputs. |
-| `action.yml` | Public `cache` input and ordered resolve, restore, setup, and explicit save steps. |
-| `test/resolve_test.sh` | Read-only CLI resolution, normalized plan output, validation parity, and changing-metadata regressions. |
-| `test/sdk_installation_test.sh` | Existing SDK installation coverage plus local archive transport validation, restored archive verification, cold archive publication, and corrupt archive rejection. |
-| `test/action_cache_test.sh` | Resolve adapter outputs, cache-key identity, final-path branching, and safe Action argv construction. |
-| Existing `test/*_test.sh` files | Focused persistence, preflight, Action metadata, and regression assertions. |
-| `test/run.sh` | Explicit registration of the three new black-box test groups. |
-| `docs/specs/0001-merry-setup/spec.md` | Amend the superseded v1 input, persistence, preflight, and cache boundaries without copying Spec 0002. |
-| `README.md` | Document `resolve`, archive transport, npm bin persistence, `cache`, the private-store precondition, and corrupt-entry recovery. |
-| `.github/workflows/integration.yml` | Add exact-version save and dependent fresh-runner restore coverage. |
+| Path                                  | Responsibility                                                                                                                                                      |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bin/merry-setup`                     | Canonical validation, read-only plan resolution, local archive handoff, checksum verification, installation, and persistence.                                       |
+| `action/preflight.sh`                 | Non-mutating validation of `cache`, `bootstrap`, and the selected project manifest before delegated setup.                                                          |
+| `action/run.sh`                       | Shared Action input-to-CLI argv conversion for `resolve` and `setup`.                                                                                               |
+| `action/resolve.sh`                   | Parse the resolved CLI plan, compute the exact Action-owned archive path and cache key, inspect the final SDK path, and write internal step outputs.                |
+| `action.yml`                          | Public `cache` input and ordered resolve, restore, setup, and explicit save steps.                                                                                  |
+| `test/resolve_test.sh`                | Read-only CLI resolution, normalized plan output, validation parity, and changing-metadata regressions.                                                             |
+| `test/sdk_installation_test.sh`       | Existing SDK installation coverage plus local archive transport validation, restored archive verification, cold archive publication, and corrupt archive rejection. |
+| `test/action_cache_test.sh`           | Resolve adapter outputs, cache-key identity, final-path branching, and safe Action argv construction.                                                               |
+| Existing `test/*_test.sh` files       | Focused persistence, preflight, Action metadata, and regression assertions.                                                                                         |
+| `test/run.sh`                         | Explicit registration of the three new black-box test groups.                                                                                                       |
+| `docs/specs/0001-merry-setup/spec.md` | Amend the superseded v1 input, persistence, preflight, and cache boundaries without copying Spec 0002.                                                              |
+| `README.md`                           | Document `resolve`, archive transport, npm bin persistence, `cache`, the private-store precondition, and corrupt-entry recovery.                                    |
+| `.github/workflows/integration.yml`   | Add exact-version save and dependent fresh-runner restore coverage.                                                                                                 |
 
 ## Requirement Coverage
 
-| Spec 0002 requirements | Owning tasks |
-| --- | --- |
-| 1–5 | Task 1 |
-| 6–9 | Tasks 2 and 4 |
-| 10–11 | Task 3 |
-| 12–14 | Task 4 |
-| Documentation and integration strategy | Task 5 |
+| Spec 0002 requirements                 | Owning tasks  |
+| -------------------------------------- | ------------- |
+| 1–5                                    | Task 1        |
+| 6–9                                    | Tasks 2 and 4 |
+| 10–11                                  | Task 3        |
+| 12–14                                  | Task 4        |
+| Documentation and integration strategy | Task 5        |
 
 ---
 
