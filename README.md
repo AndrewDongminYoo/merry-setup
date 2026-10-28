@@ -219,7 +219,9 @@ A fresh runner restored the archive without requesting the upstream SDK archive.
 ## Development
 
 ```bash
-bash -n bin/merry-setup action/preflight.sh action/resolve.sh action/run.sh test/*.sh
+for script in bin/merry-setup action/preflight.sh action/resolve.sh action/run.sh test/*.sh; do
+  bash -n "$script" || exit
+done
 shellcheck bin/merry-setup action/preflight.sh action/resolve.sh action/run.sh test/*.sh
 bash test/run.sh
 ```
