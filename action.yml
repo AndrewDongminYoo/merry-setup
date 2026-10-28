@@ -61,7 +61,7 @@ runs:
         MERRY_SETUP_PROJECT_DIR: ${{ inputs.project-dir }}
       run: '"$GITHUB_ACTION_PATH/action/preflight.sh"'
     - name: Set up Trunk launcher
-      uses: trunk-io/trunk-action/setup@e1234e67a86010d61ddac8d8ebf4b783e2ffd2fa  # v2.0.0
+      uses: trunk-io/trunk-action/setup@e1234e67a86010d61ddac8d8ebf4b783e2ffd2fa # v2.0.0
       with:
         trunk-path: ${{ inputs.trunk-path }}
     - name: Resolve SDK archive cache plan
@@ -84,7 +84,7 @@ runs:
     - name: Restore SDK release archive
       id: sdk-cache-restore
       if: inputs.cache == 'true' && steps.sdk-cache-plan.outputs.sdk-present == 'false'
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.sdk-cache-plan.outputs.archive-path }}
         key: ${{ steps.sdk-cache-plan.outputs.cache-key }}
@@ -109,7 +109,7 @@ runs:
       run: '"$GITHUB_ACTION_PATH/action/run.sh" setup'
     - name: Save SDK release archive
       if: success() && inputs.cache == 'true' && steps.sdk-cache-plan.outputs.sdk-present == 'false' && steps.sdk-cache-restore.outputs.cache-hit != 'true'
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.sdk-cache-plan.outputs.archive-path }}
         key: ${{ steps.sdk-cache-plan.outputs.cache-key }}
