@@ -10,16 +10,18 @@ Bracketed IDs such as `[L13]` in both files are Interview Ledger references (`do
 ## Commands
 
 ```bash
-# Full local gate (mirrors .github/workflows/ci.yml)
-bash -n bin/merry-setup action/preflight.sh action/run.sh test/*.sh
-shellcheck bin/merry-setup action/preflight.sh action/run.sh test/*.sh
+# Local gates (check each Bash file separately)
+for script in bin/merry-setup action/preflight.sh action/resolve.sh action/run.sh test/*.sh; do
+  bash -n "$script" || exit
+done
+shellcheck bin/merry-setup action/preflight.sh action/resolve.sh action/run.sh test/*.sh
 bash test/run.sh
 
 # One test group (each file is self-contained)
 bash test/sdk_installation_test.sh
 
-# Trunk gate: actionlint, markdownlint, shellcheck, yamllint; pre-push hook is enabled
-trunk fmt <paths> && trunk check <paths>
+# Trunk gate uses .trunk/trunk.yaml; run ShellCheck separately
+trunk check --all --no-fix --jobs=2
 
 # Trace the CLI
 DEBUG=1 bin/merry-setup setup --sdk dart --bootstrap none --persist-path none
@@ -31,10 +33,12 @@ The CLI calls GNU `mv --no-clobber --no-target-directory` and `sha256sum`; the t
 
 ## Architecture
 
-One implementation, two thin adapters:
+One implementation with thin Action adapters:
 
 - `bin/merry-setup` is the canonical, complete implementation in a single file. Every rule about validation, SDK installation, tool activation, and persistence lives here.
-- `action/preflight.sh` and `action/run.sh` are the composite Action adapter. `preflight.sh` is a non-mutating guard (bootstrap enum plus `pubspec.yaml`) that runs before the delegated `trunk-io/trunk-action/setup` step. `run.sh` converts `MERRY_SETUP_*` env vars into a Bash argv array and `exec`s the CLI with `--persist-path github` and the upstream `TRUNK_PATH`. Multi-line inputs (`dart-packages`, `bundles`, `precache`) become repeated flags.
+- `action/preflight.sh` is a non-mutating guard (cache boolean, bootstrap enum, and `pubspec.yaml`) that runs before the delegated `trunk-io/trunk-action/setup` step.
+- `action/resolve.sh` calls `action/run.sh resolve` when caching is enabled, validates the normalized CLI plan, and writes exact archive paths, cache identity, and SDK path presence to `GITHUB_OUTPUT`.
+- `action/run.sh` converts `MERRY_SETUP_*` env vars into a Bash argv array and `exec`s the CLI's `setup` or `resolve` command with `--persist-path github` and the upstream `TRUNK_PATH`. Multi-line inputs (`dart-packages`, `bundles`, `precache`) become repeated flags. Cache-enabled setup uses the resolved version and, when the SDK path is absent, the archive transport path and checksum.
 - `action.yml` is the public Action API. Inputs reach the scripts via `env`, never by interpolation into `run:`.
 
 ### CLI flow (`main`)
@@ -62,7 +66,8 @@ The `github` adapter writes `GITHUB_PATH` lines in reverse precedence because th
 
 ## Tests
 
-Black-box only: every test drives `bin/merry-setup` through `run_cli` or `run_cli_in` from `test/test_helper.sh` and asserts on exit status, stderr, files, and the recorded command log.
+The CLI tests drive `bin/merry-setup` through `run_cli` or `run_cli_in` from `test/test_helper.sh` and assert on exit status, stderr, files, and the recorded command log.
+Action tests also inspect metadata and exercise the adapter scripts with stubs.
 
 - `setup_test_env` isolates `HOME`, `MERRY_SETUP_HOME`, and `PATH`, and unsets `PUB_CACHE`. `create_recording_stub NAME` places a logging stub on PATH; `assert_command_count` reads the log.
 - `test_helper.sh` also ships the shared flow stubs (`create_host_stub`, `create_metadata_stub`, `create_dart_sdk`, `create_flutter_sdk`, `write_trunk_launcher_stub`): a pre-created SDK under `MERRY_SETUP_HOME` makes setup reuse it, and the dart stub fakes activation, `pub global list`, and `pub get`. The SDK test builds its own richer `curl`, `sha256sum`, `mv`, `tar`, and `unzip` stubs to exercise download and publication. Nothing may reach the network or the real home directory, and `bootstrap_test.sh` closes `PATH` so a real SDK on the host cannot leak in.
