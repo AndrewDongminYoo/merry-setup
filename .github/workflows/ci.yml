@@ -22,6 +22,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Test offline secret reader
+        run: python3 -B .trunk/configs/tests/test_trufflehog_to_sarif.py
+
       - name: Check Bash syntax
         run: |
           for script in bin/merry-setup action/preflight.sh action/resolve.sh action/run.sh test/*.sh; do
