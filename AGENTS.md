@@ -32,7 +32,7 @@ Delegate GitHub-native Trunk setup to `trunk-io/trunk-action/setup` rather than 
 Run `bash -n bin/merry-setup` and ShellCheck on explicit paths when the executable exists.
 Use command stubs and a controlled `PATH` for SDK download, package activation, bootstrap, and error-path tests.
 Every custom validator must have a demonstrated failing fixture before its passing result is trusted.
-Do not make unit tests download a real SDK or mutate the operator's actual home directory.
+Do not make unit tests download a real SDK or mutate the user's actual home directory.
 
 ## Documentation
 
