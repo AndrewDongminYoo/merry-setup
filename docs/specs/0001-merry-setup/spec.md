@@ -5,7 +5,7 @@ title: Merry Setup Initial Release
 
 ## Problem
 
-Multiple Dart and Flutter repositories have Codex Cloud setup scripts that repeat SDK resolution, archive verification, installation, PATH persistence, global tool activation, Trunk setup, and project dependency bootstrap.
+I maintain multiple Dart and Flutter repositories whose Codex Cloud setup scripts repeat SDK resolution, archive verification, installation, PATH persistence, global tool activation, Trunk setup, and project dependency bootstrap.
 The scripts differ primarily in SDK type, global Dart packages, coupled tools such as FlutterFire and Firebase CLI, precache targets, and bootstrap strategy.
 Keeping complete copies in every repository makes fixes and security improvements expensive to distribute, while a GitHub-only workflow cannot serve Codex Cloud setup scripts or other compatible Linux shells.
 
