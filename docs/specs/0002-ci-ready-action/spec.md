@@ -140,7 +140,7 @@ Both changes stay inside the existing contract shape: no relocation of tooling t
 ## Technical Decisions
 
 1. The npm directory is persisted conditionally rather than always, because an unconditional entry would put a directory on `PATH` for every consumer to serve the one bundle that needs it. [observed]
-2. Caching is an Action input rather than a CLI option, because the two environments differ in exactly this respect: a container is created once and a runner is created per job. Putting it in the CLI would ask every Codex Cloud wrapper to carry a setting that is meaningless there. [operator, 2026-09-03]
+2. Caching is an Action input rather than a CLI option, because the two environments differ in exactly this respect: a container is created once and a runner is created per job. Putting it in the CLI would ask every Codex Cloud wrapper to carry a setting that is meaningless there. [decided 2026-09-03]
 3. The archive cache key is computed after `stable` resolution rather than from the requested version.
    The key includes the official checksum because a movable input must never name fixed bytes, and official metadata is the authority for those bytes. [derived from requirements 23 and 28]
 4. The default is `false` rather than `true`, so adopting this release cannot change the behaviour of the fifteen repositories that merged the v1 wrapper today.

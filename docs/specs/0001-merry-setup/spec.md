@@ -5,7 +5,7 @@ title: Merry Setup Initial Release
 
 ## Problem
 
-The operator maintains multiple Dart and Flutter repositories whose Codex Cloud setup scripts repeat SDK resolution, archive verification, installation, PATH persistence, global tool activation, Trunk setup, and project dependency bootstrap.
+I maintain multiple Dart and Flutter repositories whose Codex Cloud setup scripts repeat SDK resolution, archive verification, installation, PATH persistence, global tool activation, Trunk setup, and project dependency bootstrap.
 The scripts differ primarily in SDK type, global Dart packages, coupled tools such as FlutterFire and Firebase CLI, precache targets, and bootstrap strategy.
 Keeping complete copies in every repository makes fixes and security improvements expensive to distribute, while a GitHub-only workflow cannot serve Codex Cloud setup scripts or other compatible Linux shells.
 
@@ -181,7 +181,7 @@ The initial release supports Linux x64 and deliberately excludes full CI workflo
 1. Shell syntax checks must run `bash -n` against explicit executable and test paths.
 2. ShellCheck must inspect explicit Bash paths, and any repository formatter or rewriting tool must receive explicit paths.
 3. Unit tests must prepend a fixture-controlled command directory to PATH and stub `uname`, `curl`, `tar`, `git`, `dart`, `flutter`, `npm`, and the Trunk launcher as required by each scenario.
-4. Tests must set isolated `HOME`, `MERRY_SETUP_HOME`, `PUB_CACHE`, temporary, and project directories and must never mutate the operator's real home directory.
+4. Tests must set isolated `HOME`, `MERRY_SETUP_HOME`, `PUB_CACHE`, temporary, and project directories and must never mutate the user's real home directory.
 5. SDK manifest and archive checksum behavior must be tested with local fixtures for a valid release, incomplete metadata, missing requested architecture, and checksum mismatch.
 6. A checksum or manifest validator must first be demonstrated to fail on an intentionally broken fixture before its passing fixture is accepted as evidence.
 7. SDK-store tests must verify `stable` resolution to an exact version before final-path derivation, exact resolved-version PATH entries, unique sibling staging directories, same-filesystem atomic publication, cleanup after a failed pre-publication step, reuse of a valid installation, deterministic rejection of an invalid or symbolic-link final path, and validation of a winning installation after a same-version publication race. [L13]

@@ -19,7 +19,7 @@
 - Verify every supplied or restored archive against the checksum from current official release metadata before extraction or execution.
 - Keep all Action expressions in `env` or `with` values and all CLI arguments in Bash arrays.
 - Never use `eval` or interpolate Action inputs into shell command text.
-- Use fixture metadata and command stubs for local tests. Do not download a real SDK or mutate the operator's actual home directory.
+- Use fixture metadata and command stubs for local tests. Do not download a real SDK or mutate the user's actual home directory.
 - Demonstrate every new validator and behavior assertion with an expected failing fixture before trusting its passing result.
 - Do not stage, commit, push, merge, tag, publish, dispatch a workflow, or change repository cache state without a separate request.
 
