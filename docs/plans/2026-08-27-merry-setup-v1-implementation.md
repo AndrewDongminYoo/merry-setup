@@ -280,7 +280,7 @@ Expected: every child command observes one resolved `PUB_CACHE`; persistence fil
 /opt/homebrew/bin/shellcheck bin/merry-setup action/preflight.sh action/run.sh test/*.sh
 ```
 
-Expected: all black-box tests pass and no test reaches the network or the operator's real home.
+Expected: all black-box tests pass and no test reaches the network or the user's real home.
 
 ## Task 9: Complete Distribution Documentation and CI
 
