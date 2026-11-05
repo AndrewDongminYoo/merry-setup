@@ -226,7 +226,7 @@ shellcheck bin/merry-setup action/preflight.sh action/resolve.sh action/run.sh t
 bash test/run.sh
 ```
 
-Tests stub every external command and never download a real SDK or touch the operator's home directory.
+Tests stub every external command and never download a real SDK or touch the user's home directory.
 Implementation plans belong in `docs/plans/`, and working notes belong in `docs/notes/`.
 
 ## License
